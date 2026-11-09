@@ -1,0 +1,696 @@
+/* ============================================================
+   pricing.css — Styles des fonctionnalités ajoutées
+   1. Bandeau défilant (marquee) de la page d'accueil
+   2. Badges "Nouveau" / "Exclusivité" sur les cartes
+   3. Formulaire d'alerte e-mail (nouveautés)
+   4. Bouton "Retour en haut" (back-to-top)
+   5. Toast de confirmation (favoris / alerte)
+   6. Section statistiques
+   ============================================================ */
+
+/* ============================================================
+   6. SECTION STATISTIQUES (page d'accueil)
+   ------------------------------------------------------------
+   Une bande sombre pleine largeur affichant 4 chiffres clés
+   (biens vendus, clients, années d'expérience...).
+   ============================================================ */
+.stats-section {
+  padding: 80px 6%;                                  /* espace intérieur généreux, marges latérales en % pour être fluides */
+  background: linear-gradient(135deg, var(--ink) 0%, #0a1a20 100%);  /* fond dégradé sombre (bleu-nuit) */
+  position: relative;                                /* sert de repère pour le ::before décoratif */
+  overflow: hidden;                                  /* le halo décoratif déborde → on le coupe */
+}
+
+/* Halo décoratif : cercle flou vert en haut à gauche, purement esthétique */
+.stats-section::before {
+  content: "";
+  position: absolute; top: -200px; left: -200px;     /* déborde volontairement du cadre */
+  width: 600px; height: 600px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(10,107,94,.12), transparent 70%);
+  pointer-events: none;                              /* ne bloque aucun clic */
+}
+
+/* Grille des 4 chiffres clés, alignés sur une seule ligne (desktop) */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);             /* 4 colonnes égales */
+  gap: 0;                                            /* les séparateurs verticaux font office d'espacement */
+  position: relative; z-index: 1;                    /* au-dessus du halo décoratif */
+}
+
+/* Chaque statistique : icône + nombre + libellé empilés verticalement */
+.stat-item {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; padding: 36px 20px;
+  border-right: 1px solid rgba(255,255,255,.08);     /* fin séparateur vertical entre les stats */
+  text-align: center;
+  transition: background .3s ease;
+}
+.stat-item:hover { background: rgba(255,255,255,.03); }  /* léger éclaircissement au survol */
+.stat-item:last-child { border-right: 0; }           /* pas de séparateur après la dernière stat */
+
+/* Petite pastille carrée arrondie contenant l'icône */
+.stat-icon {
+  width: 48px; height: 48px;
+  display: grid; place-items: center;                /* centre parfaitement l'icône */
+  border-radius: 12px;
+  background: rgba(10,107,94,.25);                   /* fond vert translucide */
+  color: rgba(140,205,190,.9);                       /* icône vert d'eau */
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+/* Le chiffre : grande police serif, taille fluide via clamp() */
+.stat-number {
+  font-family: var(--serif);
+  font-size: clamp(38px, 4vw, 54px);                 /* entre 38px et 54px selon la largeur d'écran */
+  font-weight: 500; color: #fff;
+  letter-spacing: -1px; line-height: 1;              /* resserré pour un rendu éditorial */
+}
+
+/* Libellé sous le chiffre : petit, espacé, en majuscules */
+.stat-label {
+  font-size: 12px; color: rgba(255,255,255,.45);
+  letter-spacing: .8px; text-transform: uppercase;
+}
+
+/* ============================================================
+   1. BANDEAU DÉFILANT (marquee) — page d'accueil
+   ------------------------------------------------------------
+   Ruban sombre où les mots-clés défilent en boucle à l'infini.
+   Technique : la liste est doublée en HTML et l'animation
+   translate de -50% (la largeur d'une copie) puis recommence.
+   ============================================================ */
+.marquee {
+  overflow: hidden;                                  /* cache ce qui sort du ruban */
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: var(--ink);                            /* ruban sombre pour contraster avec la page */
+  color: #fff;
+}
+
+/* La piste animée : elle est plus large que l'écran (max-content)
+   et glisse horizontalement en boucle, 28 s par cycle */
+.marquee-track {
+  display: flex;
+  gap: 48px;
+  width: max-content;                                /* la piste fait la largeur de son contenu */
+  margin: 0; padding: 0;
+  list-style: none;
+  animation: marquee-scroll 28s linear infinite;     /* défilement linéaire, sans à-coups */
+}
+.marquee:hover .marquee-track { animation-play-state: paused; }  /* pause au survol (lisibilité) */
+
+/* Chaque élément du ruban : jamais de retour à la ligne */
+.marquee-track li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;                               /* empêche la coupure du texte */
+  font-size: 12px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.marquee-track li::before { content: "✳"; color: var(--accent); font-size: 14px; }  /* astérisque décoratif */
+
+/* L'animation elle-même : on avance de la moitié de la piste
+   (soit exactement une copie de la liste) puis on repart à 0 */
+@keyframes marquee-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* ============================================================
+   2. BADGES "NOUVEAU / EXCLUSIVITÉ"
+   ------------------------------------------------------------
+   Pastille colorée posée en haut à gauche de la photo d'un
+   bien, juste sous le badge Vente/Location.
+   ============================================================ */
+.novelty-badge {
+  position: absolute;                                /* positionné par rapport à .property-image */
+  top: 44px;                                         /* décalé vers le bas pour ne pas recouvrir le 1er badge */
+  left: 13px;
+  padding: 5px 9px;
+  border-radius: 4px;
+  background: var(--accent);                         /* orange/terracotta par défaut ("Exclusivité") */
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+}
+.novelty-badge.is-new { background: var(--green); }  /* variante verte pour les biens "Nouveau" */
+
+/* ============================================================
+   3. FORMULAIRE D'ALERTE E-MAIL (nouveautés)
+   ------------------------------------------------------------
+   Section centrée : titre, texte, champ e-mail + bouton
+   côte à côte sur desktop, empilés sur mobile.
+   ============================================================ */
+.alerte-section { padding: 80px 11%; background: var(--paper); }
+
+/* Bloc central limité en largeur et centré */
+.alerte-inner {
+  max-width: 640px;
+  margin: 0 auto;
+  text-align: center;
+}
+.alerte-inner .eyebrow { justify-content: center; margin-bottom: 14px; }
+.alerte-inner h2 { font-size: clamp(32px, 4vw, 44px); }  /* titre fluide */
+.alerte-inner > p:not(.eyebrow) {                    /* paragraphe d'introduction */
+  max-width: 430px;
+  margin: 16px auto 24px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+/* Composition : champ e-mail + bouton sur la même ligne (desktop) */
+.alerte-form {
+  display: flex;
+  gap: 10px;
+  max-width: 470px;
+  margin: 0 auto;
+}
+.alerte-form input {
+  flex: 1;                                           /* le champ prend toute la place restante */
+  min-width: 0;                                      /* évite que le champ ne force le débordement */
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fbfdfc;
+  color: var(--ink);
+  font-size: 14px;
+}
+/* État focus : bordure verte + halo doux, sans contour bleu du navigateur */
+.alerte-form input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22, 118, 110, .1); outline: 0; }
+.alerte-form .search-button { min-width: auto; }     /* le bouton s'adapte à son texte */
+.alerte-note { margin-top: 14px; color: var(--muted); font-size: 12px; }  /* petite mention sous le formulaire */
+
+/* ============================================================
+   4. BOUTON "RETOUR EN HAUT" (back-to-top)
+   ------------------------------------------------------------
+   Bouton rond fixe en bas à droite. Caché par défaut ;
+   le JS lui ajoute .is-visible quand on scrolle.
+   ============================================================ */
+.back-to-top {
+  position: fixed;                                   /* reste en place pendant le scroll */
+  z-index: 15;
+  right: 24px;
+  bottom: 24px;
+  width: 46px; height: 46px;
+  display: grid; place-items: center;                /* flèche parfaitement centrée */
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: #fff;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 18px;
+  box-shadow: var(--shadow-md);
+  opacity: 0;                                        /* invisible par défaut */
+  visibility: hidden;                                /* + non cliquable */
+  transform: translateY(10px);                       /* léger décalage vers le bas */
+  transition: opacity .25s ease, transform .25s ease, visibility .25s, background .2s ease;
+}
+/* Classe ajoutée par le JS au scroll → apparition en fondu + montée */
+.back-to-top.is-visible { opacity: 1; visibility: visible; transform: translateY(0); }
+.back-to-top:hover { background: var(--green); color: #fff; border-color: var(--green); }  /* s'inverse au survol */
+
+/* ============================================================
+   5. TOAST DE CONFIRMATION (favoris / alerte)
+   ------------------------------------------------------------
+   Petit bandeau noir fixé en bas au centre, qui apparaît
+   brièvement pour confirmer une action ("Ajouté aux favoris").
+   ============================================================ */
+.toast {
+  position: fixed;
+  z-index: 30;                                       /* au-dessus de tout le reste */
+  left: 50%;
+  bottom: 28px;
+  max-width: calc(100% - 40px);                      /* ne touche jamais les bords de l'écran */
+  padding: 14px 24px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  transform: translate(-50%, 18px);                  /* centré horizontalement + décalé vers le bas */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .25s ease, transform .25s ease, visibility .25s;
+}
+/* .is-visible ajoutée par le JS → le toast monte et apparaît */
+.toast.is-visible { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+
+/* ---- Adaptation mobile des nouveaux éléments -------------- */
+@media (max-width: 620px) {
+  .alerte-section { padding: 55px 6%; }              /* marges réduites sur petit écran */
+  .alerte-form { flex-direction: column; }           /* champ et bouton empilés verticalement */
+  .alerte-form .search-button { width: 100%; }       /* bouton pleine largeur */
+  .back-to-top { right: 15px; bottom: 15px; width: 42px; height: 42px; }  /* bouton plus discret */
+}
+
+/* ============================================================
+   6. PAGE "SIMULER UN PRÊT" (html/pret.html)
+   ------------------------------------------------------------
+   Hero en deux colonnes (texte / visuel sombre), carte de
+   simulation avec curseurs, carte de résultats et analyse.
+   ============================================================ */
+.loan-section { padding-bottom: 90px; }
+
+/* ---- Hero pret ------------------------------------------- */
+/* Deux colonnes : texte à gauche, "mockup" sombre à droite */
+.pret-hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 6%;
+  padding: 80px 7.2%;
+  /* double fond : halo vert en haut à droite + dégradé clair global */
+  background: radial-gradient(ellipse at 85% 15%, rgba(140,205,190,.25), transparent 40%),
+              linear-gradient(120deg, #f4f8f6 0%, #eaf4f0 100%);
+}
+.pret-hero-copy h1 { font-size: clamp(38px, 4.5vw, 58px); }  /* très grand titre fluide */
+.pret-hero-copy > p { max-width: 480px; margin: 18px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.85; }
+.pret-hero-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+
+/* Le visuel : panneau sombre arrondi contenant les cartes de démo */
+.pret-hero-visual {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 32px;
+  background: var(--ink);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+}
+/* Carte de démo translucide à l'intérieur du panneau */
+.pret-hero-card {
+  padding: 22px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+}
+.phc-label { margin: 0 0 6px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: rgba(255,255,255,.5); }
+.phc-value { margin: 0 0 14px; font-family: var(--serif); font-size: 36px; font-weight: 500; color: #fff; line-height: 1; }
+.phc-value small { font-family: var(--sans); font-size: 14px; color: rgba(255,255,255,.5); margin-left: 4px; }
+
+/* Barre de répartition capital / intérêts de la carte de démo */
+.phc-bar { height: 8px; border-radius: 99px; background: rgba(192,80,58,.4); overflow: hidden; }
+.phc-bar span { display: block; height: 100%; background: var(--green); border-radius: 99px; }
+.phc-legend { display: flex; gap: 16px; margin-top: 8px; font-size: 11px; color: rgba(255,255,255,.5); }
+/* Petits points de légende (vert = capital, rouge translucide = intérêts) */
+.dot-c { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 5px; }
+.dot-i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: rgba(192,80,58,.6); margin-right: 5px; }
+
+/* Pastilles de conseil (ok = vert / tip = orange) */
+.pret-hero-pill {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 13px; font-weight: 600;
+}
+.pret-hero-pill.ok { background: rgba(15,107,99,.25); color: #7dd4c8; }
+.pret-hero-pill.tip { background: rgba(192,80,58,.2); color: #e8a090; }
+.pret-hero-pill i { font-size: 14px; }
+
+/* ---- Carte des curseurs ---------------------------------- */
+/* La carte blanche où l'utilisateur règle prix, apport, durée */
+.loan-card {
+  border: 1px solid var(--line);
+  background: #fff;
+  box-shadow: 0 12px 35px rgba(32, 50, 57, .07);     /* ombre douce qui fait "flotter" la carte */
+}
+.loan-title, .loan-results-label {                   /* titres serif des deux cartes */
+  margin: 0 0 22px;
+  font-family: var(--serif);
+  font-size: 27px;
+  font-weight: 500;
+}
+.loan-field { display: block; margin-bottom: 22px; }
+/* Ligne d'en-tête du champ : libellé à gauche, valeur à droite */
+.loan-field > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: #435d5e;
+  font-size: 13px;
+  font-weight: 600;
+}
+.loan-field output { color: var(--green); }          /* la valeur affichée ressort en vert */
+.loan-field input[type="range"] { width: 100%; accent-color: var(--green); cursor: pointer; }  /* curseurs aux couleurs du site */
+/* Champ revenu : cas particulier, on empile libellé + aide + input */
+.loan-field--income > span { display: block; margin-bottom: 8px; }
+.loan-field--income small { font-weight: 400; color: var(--muted); }
+/* Champ texte avec icône "€" absolue à gauche */
+.income-wrap { position: relative; }
+.income-wrap i { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 12px; pointer-events: none; }
+.income-wrap input { width: 100%; padding: 10px 12px 10px 28px; border: 1.5px solid var(--line); border-radius: 6px; background: #fbfdfc; color: var(--ink); font-size: 14px; }
+.income-wrap input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(15,107,99,.1); outline: 0; }
+.loan-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+
+/* ---- Carte des résultats --------------------------------- */
+/* Panneau légèrement dégradé affichant la mensualité calculée */
+.loan-results {
+  border: 1px solid var(--line);
+  background: linear-gradient(160deg, #f2f7f5, #fff 70%);
+}
+.loan-results-label { font-size: 15px; font-family: var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+/* Le chiffre vedette : la mensualité, très grand et en vert */
+.loan-monthly {
+  margin: 0 0 22px;
+  color: var(--green);
+  font-family: var(--serif);
+  font-size: clamp(38px, 5vw, 52px);
+  font-weight: 600;
+  letter-spacing: -1px;
+}
+/* Barre de répartition capital (vert) / intérêts (beige rosé) */
+.loan-split { display: flex; height: 14px; overflow: hidden; border-radius: 99px; background: #ecd7cf; }
+.loan-split-capital { background: var(--green); transition: width .3s ease; }  /* la largeur est pilotée par le JS */
+.loan-legend { display: flex; justify-content: space-between; gap: 10px; margin: 10px 0 20px; color: var(--muted); font-size: 12px; }
+.loan-legend b { color: var(--ink); }
+.loan-legend .dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; }
+.dot-capital { background: var(--green); }
+.dot-interest { background: #ecd7cf; }
+/* Récapitulatif ligne par ligne (montant, apport, durée...) */
+.loan-summary { margin: 0 0 20px; padding: 0; list-style: none; }
+.loan-summary li { display: flex; justify-content: space-between; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.loan-summary li:last-child { border-bottom: 0; }    /* pas de trait sous la dernière ligne */
+.loan-summary strong { color: var(--ink); }
+
+/* ---- Taux d'endettement inline --------------------------- */
+/* Encart compact dans la carte des résultats : ratio + barre */
+.debt-inline { margin-bottom: 20px; padding: 14px 16px; border-radius: 8px; background: var(--paper); border: 1px solid var(--line); }
+.debt-inline-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.debt-inline-label { font-size: 12px; font-weight: 600; color: var(--ink); }
+.debt-inline-value { font-size: 18px; font-weight: 700; font-family: var(--serif); color: var(--ink); }
+.debt-bar-wrap { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin-bottom: 8px; }
+.debt-bar { height: 100%; border-radius: 99px; background: var(--green); transition: width .4s ease, background .4s ease; }  /* couleur et largeur pilotées par le JS */
+.debt-advice { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+/* ============================================================
+   TÉMOIGNAGES (index.html)
+   ------------------------------------------------------------
+   3 cartes en grille : avatar, étoiles, citation, signature.
+   ============================================================ */
+.testimonials-section { padding: 90px 7.2%; background: var(--white); }
+.testimonials-heading { text-align: center; margin-bottom: 48px; }
+.testimonials-heading h2 { font-size: clamp(30px, 3.5vw, 44px); margin: 0; }
+.testimonials-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+
+/* Carte individuelle : légère élévation au survol */
+.testimonial-card {
+  margin: 0;
+  padding: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  display: flex; flex-direction: column; gap: 14px;
+  transition: box-shadow .25s ease, transform .25s ease;
+}
+.testimonial-card:hover { box-shadow: var(--shadow-md); transform: translateY(-3px); }
+
+/* Photo de profil ronde avec liseré blanc */
+.testimonial-avatar {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  object-fit: cover;                                 /* la photo remplît le cercle sans se déformer */
+  border: 3px solid var(--white);
+  box-shadow: var(--shadow-sm);
+  flex-shrink: 0;                                    /* ne jamais écraser l'avatar */
+}
+.testimonial-stars { color: #f5a623; font-size: 15px; letter-spacing: 2px; }  /* étoiles dorées */
+.testimonial-card > p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; font-style: italic; flex: 1; }  /* citation en italique */
+/* Pied de carte : trait de séparation + nom / ville */
+.testimonial-card footer {
+  display: flex; align-items: center; gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.testimonial-card footer strong { display: block; font-size: 13px; font-weight: 700; color: var(--ink); }
+.testimonial-card footer span { font-size: 12px; color: var(--muted); }
+
+/* ============================================================
+   COMMENT ÇA MARCHE (index.html)
+   ------------------------------------------------------------
+   3 étapes numérotées reliées par une ligne horizontale.
+   ============================================================ */
+.how-section {
+  padding: 100px 6%;
+  background: var(--white);
+  position: relative; overflow: hidden;
+}
+/* Deuxième halo décoratif, cette fois en bas à droite */
+.how-section::before {
+  content: "";
+  position: absolute; bottom: -100px; right: -100px;
+  width: 400px; height: 400px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(10,107,94,.05), transparent 70%);
+  pointer-events: none;
+}
+.how-heading { text-align: center; margin-bottom: 64px; }
+.how-heading h2 { font-size: clamp(32px, 3.5vw, 46px); margin: 0; }
+.how-heading p { max-width: 480px; margin: 16px auto 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.how-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 32px; position: relative; z-index: 1;
+}
+/* Ligne de connexion entre les étapes : tracée derrière les
+   cartes (z-index 0), calée sur le centre des pastilles numérotées */
+.how-grid::before {
+  content: "";
+  position: absolute; top: 36px; left: calc(16.66% + 20px); right: calc(16.66% + 20px);
+  height: 1px;
+  background: linear-gradient(90deg, var(--green-light), var(--line), var(--green-light));
+  z-index: 0;
+}
+/* Chaque étape : carte centrée qui se soulève au survol */
+.how-step {
+  position: relative; z-index: 1;                    /* la carte recouvre la ligne de connexion */
+  padding: 36px 32px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  transition: box-shadow .3s ease, transform .3s ease, border-color .3s ease;
+}
+.how-step:hover { box-shadow: var(--shadow-md); transform: translateY(-6px); border-color: rgba(10,107,94,.2); }
+/* Pastille ronde dégradée contenant le numéro de l'étape */
+.how-num-wrap {
+  width: 72px; height: 72px;
+  display: grid; place-items: center;
+  margin: 0 auto 22px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--green), var(--green-2));
+  box-shadow: 0 8px 24px rgba(10,107,94,.3);
+}
+.how-num {
+  font-family: var(--serif);
+  font-size: 28px; font-weight: 600;
+  color: #fff; line-height: 1;
+}
+.how-step h3 { margin: 0 0 12px; font-family: var(--serif); font-size: 22px; font-weight: 500; }
+.how-step p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.85; }
+
+/* ============================================================
+   NOUVELLES SECTIONS — PAGES SECONDAIRES
+   (acheter, louer, contact...)
+   ============================================================ */
+
+/* ---- Hero split (image + texte) -------------------------- */
+/* Même logique que le hero du prêt : texte / image côte à côte */
+.page-hero--split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 6%;
+  padding: 80px 7.2% 0;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 85% 15%, rgba(140,205,190,.25), transparent 40%),
+              linear-gradient(120deg, #f4f8f6 0%, #eaf4f0 100%);
+}
+.page-hero-copy { padding-bottom: 80px; }
+.page-hero-copy p:not(.eyebrow) { max-width: 480px; margin: 18px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.85; }
+/* L'image touche le bas du hero (align-self: end) sans coins bas */
+.page-hero-image { position: relative; height: 420px; align-self: end; }
+.page-hero-image img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px 8px 0 0; display: block; }
+/* Encart chiffré sombre posé sur le coin bas-gauche de l'image */
+.page-hero-stat {
+  position: absolute;
+  bottom: 0; left: -20px;                            /* dépasse volontairement à gauche */
+  display: flex; flex-direction: column; align-items: center;
+  padding: 18px 24px;
+  background: var(--ink); color: #fff;
+  border-radius: 8px 8px 0 0;
+  text-align: center;
+}
+.page-hero-stat strong { font-family: var(--serif); font-size: 36px; font-weight: 500; line-height: 1; color: #fff; }
+.page-hero-stat span { font-size: 11px; color: rgba(255,255,255,.6); letter-spacing: .5px; margin-top: 4px; }
+
+/* ---- Badges hero ---------------------------------------- */
+.page-hero-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+/* Pastille "pilule" verte claire (ex. "Sans frais d'agence") */
+.hero-badge {
+  padding: 6px 12px;
+  border: 1px solid rgba(15,107,99,.2);
+  border-radius: 20px;
+  background: var(--green-light);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 600;
+}
+/* Variante interactive : les badges peuvent être des liens (<a>) cliquables */
+a.hero-badge { text-decoration: none; transition: all .2s ease; }
+a.hero-badge:hover { background: var(--green); color: #fff; border-color: var(--green); }
+
+/* ---- Section CTA bas de page ---------------------------- */
+/* Grand bandeau sombre de conclusion avec boutons d'action */
+.page-cta-section {
+  padding: 90px 7.2%;
+  background: var(--ink);
+  text-align: center;
+}
+.page-cta-inner { max-width: 620px; margin: 0 auto; }
+.page-cta-inner .eyebrow { justify-content: center; color: rgba(255,255,255,.5); }
+.page-cta-inner .eyebrow-line { background: var(--accent); }
+.page-cta-inner h2 { color: #fff; font-size: clamp(32px, 4vw, 46px); margin: 0 0 16px; }
+.page-cta-inner h2 em { color: rgba(140,205,190,.9); }  /* le mot en italique ressort en vert d'eau */
+.page-cta-inner > p { color: rgba(255,255,255,.55); font-size: 14px; line-height: 1.8; margin: 0 0 32px; }
+.page-cta-actions { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
+/* Le bouton secondaire "outline" est adapté au fond sombre */
+.page-cta-actions .outline-button { border-color: rgba(255,255,255,.2); color: rgba(255,255,255,.7); background: transparent; }
+.page-cta-actions .outline-button:hover { border-color: #fff; color: #fff; }
+
+/* ---- Page contact : titre + cartes ---------------------- */
+.contact-options-heading { margin-bottom: 36px; }
+.contact-options-heading h2 { font-size: clamp(32px, 4vw, 46px); margin: 0; }
+/* Icône carrée arrondie en tête de chaque carte de contact */
+.contact-option-icon-wrap {
+  width: 52px; height: 52px;
+  display: grid; place-items: center;
+  border-radius: 12px;
+  background: var(--green-light);
+  color: var(--green);
+  margin-bottom: 18px;
+}
+/* Liste de points forts avec petite coche verte devant chaque item */
+.contact-option-list {
+  margin: 0 0 22px; padding: 0;
+  list-style: none;
+  display: flex; flex-direction: column; gap: 7px;
+  flex: 1;                                           /* pousse le bouton vers le bas de la carte */
+}
+.contact-option-list li { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.contact-option-list li::before { content: "\2713"; color: var(--green); font-weight: 700; font-size: 12px; }  /* coche ✓ */
+.contact-option-card { display: flex; flex-direction: column; }
+.contact-option-card .search-button { width: 100%; justify-content: center; margin-top: auto; text-decoration: none; }  /* bouton collé en bas */
+
+/* ---- FAQ ------------------------------------------------- */
+/* Grille 1 / 1.6 : titre à gauche, liste dépliante à droite.
+   Les <details>/<summary> HTML natifs gèrent l'ouverture. */
+.faq-section { padding: 90px 7.2%; background: var(--paper); }
+.faq-inner { display: grid; grid-template-columns: 1fr 1.6fr; gap: 6%; align-items: start; }
+.faq-heading h2 { font-size: clamp(30px, 3.5vw, 42px); margin: 0; }
+.faq-list { display: flex; flex-direction: column; }
+.faq-item { border-bottom: 1px solid var(--line); }
+/* Ligne de question : cliquable, flèche "+" à droite */
+.faq-item summary {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 0; cursor: pointer;
+  font-size: 14px; font-weight: 600; color: var(--ink);
+  list-style: none;                                  /* retire le triangle natif */
+  transition: color .2s ease;
+}
+.faq-item summary::-webkit-details-marker { display: none; }  /* idem pour Safari */
+/* Le "+" devient "×" (rotation à 45°) quand la question est ouverte */
+.faq-item summary::after { content: "+"; color: var(--accent); font-size: 22px; font-weight: 300; flex-shrink: 0; transition: transform .25s ease; }
+.faq-item[open] summary::after { transform: rotate(45deg); }
+.faq-item[open] summary { color: var(--green); }    /* question active en vert */
+.faq-item p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+
+/* ---- Prêt : section analyse en temps réel --------------- */
+/* 4 cartes : prix, effort d'épargne, taux d'endettement, conseil */
+.loan-analysis-section { padding: 90px 7.2%; background: var(--white); }
+.loan-analysis-heading { text-align: center; margin-bottom: 48px; }
+.loan-analysis-heading h2 { font-size: clamp(30px, 3.5vw, 44px); margin: 0; }
+.loan-analysis-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+.loan-analysis-card {
+  display: flex; flex-direction: column; gap: 0;
+  padding: 28px 24px; border: 1px solid var(--line);
+  border-radius: var(--radius); background: var(--paper);
+  transition: box-shadow .25s ease, transform .25s ease;
+}
+.loan-analysis-card:hover { box-shadow: var(--shadow-md); transform: translateY(-4px); }
+/* Icône verte en tête de carte */
+.lac-icon {
+  width: 44px; height: 44px;
+  display: grid; place-items: center;
+  border-radius: 10px;
+  background: var(--green-light);
+  color: var(--green);
+  font-size: 18px;
+  margin-bottom: 18px;
+  flex-shrink: 0;
+}
+.lac-body { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.lac-label { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
+/* La valeur mise à jour en direct par le JS */
+.lac-value { margin: 0; font-family: var(--serif); font-size: clamp(26px, 2.5vw, 34px); font-weight: 500; color: var(--ink); line-height: 1.1; }
+.lac-sub { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.lac-advice { margin: 8px 0 0; font-size: 12px; line-height: 1.7; color: var(--muted); }
+.lac-advice--main { font-size: 13px; line-height: 1.8; color: var(--ink); font-style: italic; }  /* conseil principal mis en avant */
+/* Champ "revenu" de la carte endettement (icône € à gauche) */
+.lac-input-label {
+  display: block; margin-top: 14px;
+  font-size: 12px; font-weight: 600; color: var(--ink);
+}
+.lac-input-wrap {
+  position: relative; margin-top: 6px;
+}
+.lac-input-wrap i {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); font-size: 12px; pointer-events: none;
+}
+.lac-input-wrap input {
+  width: 100%; padding: 9px 10px 9px 28px;           /* padding gauche élargi pour l'icône */
+  border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--ink); font-size: 14px;
+}
+.lac-input-wrap input:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(15,107,99,.1); outline: 0; }
+
+/* ============================================================
+   RESPONSIVE DES NOUVELLES SECTIONS
+   ------------------------------------------------------------
+   900px  : tablette — grilles 3/4 colonnes → 1 ou 2 colonnes
+   620px  : mobile   — paddings réduits, tout en 1 colonne
+   ============================================================ */
+@media (max-width: 900px) {
+  .testimonials-grid { grid-template-columns: 1fr; }                     /* témoignages empilés */
+  .how-grid { grid-template-columns: 1fr; gap: 0; }                      /* étapes empilées... */
+  .how-step { border-right: 0; border-bottom: 1px solid var(--line); padding: 0 0 28px !important; }  /* ...séparées par un trait */
+  .how-step:last-child { border-bottom: 0; padding-bottom: 0 !important; }  /* sauf la dernière */
+  .pret-hero { grid-template-columns: 1fr; gap: 40px; padding: 65px 6%; }    /* hero prêt : 1 colonne */
+  .page-hero--split { grid-template-columns: 1fr; gap: 0; padding-bottom: 0; }  /* hero split : 1 colonne */
+  .page-hero-copy { padding-bottom: 40px; }
+  .page-hero-image { height: 320px; }
+  .page-hero-stat { left: 0; }                                           /* encart ne déborde plus */
+  .faq-inner { grid-template-columns: 1fr; gap: 32px; }
+  .loan-analysis-grid { grid-template-columns: repeat(2, 1fr); }         /* analyse : 2x2 */
+}
+@media (max-width: 620px) {
+  .testimonials-section { padding: 65px 6%; }
+  .how-section { padding: 65px 6%; }
+  .page-hero--split { padding: 58px 6% 0; }
+  .page-hero-image { height: 260px; }
+  .page-cta-section { padding: 65px 6%; }
+  .page-cta-actions { flex-direction: column; }                          /* boutons empilés */
+  .page-cta-actions .search-button,
+  .page-cta-actions .outline-button { width: 100%; justify-content: center; }  /* boutons pleine largeur */
+  .faq-section { padding: 65px 6%; }
+  .loan-analysis-section { padding: 65px 6%; }
+  .loan-analysis-grid { grid-template-columns: 1fr; }                    /* analyse : 1 colonne */
+  .contact-options { padding: 50px 6% 65px; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }                 /* stats : 2x2 */
+}

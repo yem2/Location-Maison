@@ -1,0 +1,233 @@
+/* ============================================================
+   BOUTONS
+   ============================================================ */
+.search-button {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-width: 150px; padding: 14px 24px;
+  border: 0; border-radius: 10px;
+  background: linear-gradient(135deg, var(--green) 0%, var(--green-2) 100%);
+  color: #fff; cursor: pointer;
+  font-size: 13px; font-weight: 600; letter-spacing: .2px;
+  box-shadow: 0 4px 16px rgba(10,107,94,.3);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.search-button:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(10,107,94,.4); }
+.search-button span { font-size: 16px; }
+.search-actions .search-button { min-width: 180px; }
+
+.reset-button {
+  padding: 9px 0; border: 0; background: none;
+  color: var(--muted); cursor: pointer; font-size: 12px;
+  text-decoration: underline; text-underline-offset: 3px;
+  transition: color .2s ease;
+}
+.reset-button:hover { color: var(--green); }
+
+.outline-button {
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 13px 24px;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--ink); cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  transition: border-color .2s ease, color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.outline-button:hover { border-color: var(--green); color: var(--green); transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+.outline-button span { color: var(--accent); font-size: 16px; }
+
+/* ============================================================
+   FILTRES PILL
+   ============================================================ */
+.filter-tab {
+  padding: 9px 18px;
+  border: 1.5px solid transparent; border-radius: 24px;
+  background: none; color: #5a706e; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+  transition: all .2s ease;
+}
+.filter-tab.active {
+  border-color: var(--green);
+  background: linear-gradient(135deg, var(--green-light), #d4ede7);
+  color: var(--green); font-weight: 700;
+  box-shadow: 0 2px 8px rgba(10,107,94,.15);
+}
+.filter-tab:hover:not(.active) { background: var(--paper); border-color: var(--line); }
+.filter-tab span { margin-left: 4px; color: var(--accent); font-size: 11px; }
+
+.favorites-filter {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--line); border-radius: 24px;
+  background: #fff; color: #526d6d; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+  transition: all .2s ease;
+}
+.favorites-filter[aria-pressed="true"] { border-color: var(--accent); color: #a94432; background: var(--accent-light); }
+.favorites-filter b { color: var(--accent); font-size: 12px; }
+
+.compare-toggle {
+  padding: 8px 14px;
+  border: 1.5px solid var(--line); border-radius: 24px;
+  background: #fff; color: var(--green); cursor: pointer;
+  font-size: 12px; font-weight: 500;
+  transition: all .2s ease;
+}
+.compare-toggle:not(:disabled):hover { border-color: var(--green); background: var(--green-light); }
+.compare-toggle:disabled { color: #98aaa6; cursor: not-allowed; opacity: .6; }
+.compare-toggle b { margin-left: 4px; color: var(--accent); }
+
+.compare-property {
+  margin-top: 13px; padding: 7px 12px;
+  border: 1.5px solid var(--line); border-radius: 8px;
+  background: #f7fbf9; color: var(--green); cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: all .2s ease;
+}
+.compare-property[aria-pressed="true"] { border-color: var(--green); background: var(--green-light); font-weight: 700; }
+
+/* Bouton "Voir le détail" des cartes de biens : texte + flèche animée au survol */
+.details-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  margin-top: 13px;
+  border: 1.5px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all .2s ease;
+}
+.details-button span { transition: transform .2s ease; }
+.details-button:hover { border-color: var(--green); background: var(--green-light); }
+.details-button:hover span { transform: translateX(4px); }
+.details-button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* ============================================================
+   BADGES SUR LES CARTES
+   ============================================================ */
+.property-badge {
+  position: absolute; top: 14px; left: 14px;
+  padding: 6px 12px; border-radius: 8px;
+  background: rgba(255,255,255,.95); backdrop-filter: blur(8px);
+  color: var(--green); font-size: 10px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase;
+  box-shadow: 0 2px 8px rgba(0,0,0,.1);
+}
+.novelty-badge {
+  position: absolute; top: 46px; left: 14px;
+  padding: 5px 10px; border-radius: 6px;
+  background: var(--accent); color: #fff;
+  font-size: 10px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+}
+.novelty-badge.is-new { background: var(--green-2); }
+
+.favorite-button {
+  position: absolute; top: 12px; right: 12px;
+  width: 38px; height: 38px; display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.92); backdrop-filter: blur(8px);
+  color: #7a9090; cursor: pointer; font-size: 19px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.1);
+  transition: color .2s ease, transform .2s ease, background .2s ease;
+}
+.favorite-button:hover { transform: scale(1.15); background: #fff; }
+.favorite-button[aria-pressed="true"] { color: #d65d4b; }
+
+/* ============================================================
+   DIALOGS
+   ============================================================ */
+.compare-dialog {
+  position: relative; width: min(920px, calc(100% - 32px));
+  max-height: 90vh; padding: 0; overflow: auto;
+  border: 0; border-radius: var(--radius-lg);
+  background: #fff; color: var(--ink); box-shadow: var(--shadow-xl);
+}
+.compare-dialog::backdrop { background: rgba(10,26,32,.7); backdrop-filter: blur(6px); }
+.compare-content { padding: 40px; }
+.compare-content h2 { margin-bottom: 28px; font-size: 36px; }
+.comparison-table { display: grid; min-width: 480px; }
+.comparison-row {
+  display: grid; grid-template-columns: 140px repeat(3, minmax(130px, 1fr));
+  gap: 12px; padding: 14px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: 12px;
+}
+.comparison-row > :first-child { color: var(--ink); font-weight: 600; }
+.comparison-heading { color: var(--green); background: var(--green-light); border-radius: 6px; }
+
+.detail-actions { margin-top: 18px; }
+.share-property { padding: 10px 13px; }
+.share-feedback { margin: 8px 0 0; color: var(--green); font-size: 12px; }
+.share-link { display: block; margin-top: 6px; overflow-wrap: anywhere; color: var(--green); font-size: 12px; }
+
+.property-dialog, .contact-dialog {
+  position: relative; width: min(780px, calc(100% - 32px));
+  max-height: min(90vh, 920px); padding: 0; overflow: auto;
+  border: 0; border-radius: var(--radius-lg);
+  background: #fff; color: var(--ink); box-shadow: var(--shadow-xl);
+}
+.contact-dialog { max-width: 580px; }
+.property-dialog::backdrop, .contact-dialog::backdrop { background: rgba(10,26,32,.7); backdrop-filter: blur(6px); }
+
+.dialog-close {
+  position: absolute; z-index: 1; top: 16px; right: 16px;
+  width: 40px; height: 40px; border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.95); backdrop-filter: blur(8px);
+  color: var(--ink); cursor: pointer; font-size: 22px; line-height: 1;
+  box-shadow: var(--shadow-sm);
+  transition: background .2s ease, transform .2s ease;
+}
+.dialog-close:hover { background: #fff; transform: rotate(90deg); }
+
+.dialog-image { display: block; width: 100%; height: 360px; object-fit: cover; background: #e8f0ed; }
+.dialog-content { padding: 32px 38px 38px; }
+.dialog-content h2 { font-size: 38px; letter-spacing: -1px; }
+.dialog-price { margin: 10px 0 22px; color: var(--green); font-size: 24px; font-weight: 700; }
+.dialog-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; padding: 18px 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: 12px;
+}
+.dialog-stats strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 18px; font-weight: 700; }
+.dialog-description { color: var(--muted); font-size: 13px; line-height: 1.9; margin-top: 18px; }
+.dialog-content h3 { margin: 24px 0 14px; font-family: var(--serif); font-size: 20px; font-weight: 500; }
+.feature-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.feature-link {
+  padding: 8px 14px;
+  border: 1.5px solid #d4e8e0; border-radius: 24px;
+  background: var(--green-light); color: var(--green);
+  cursor: pointer; font-size: 12px; font-weight: 500;
+  transition: background .2s ease, border-color .2s ease, transform .15s ease;
+}
+.feature-link:hover { border-color: var(--green); background: #d4ede7; transform: translateY(-1px); }
+.feature-link span { color: var(--accent); }
+.dialog-contact { display: inline-flex; align-items: center; justify-content: center; margin-top: 26px; }
+
+/* ============================================================
+   FORMULAIRE CONTACT
+   ============================================================ */
+.contact-content { padding: 42px; }
+.contact-content > .eyebrow { margin-bottom: 12px; }
+.contact-content h2 { font-size: 40px; }
+.contact-context { margin: 12px 0 26px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+#contact-form { display: grid; gap: 16px; }
+#contact-form label { display: grid; gap: 7px; color: #3d5a5c; font-size: 12px; font-weight: 600; }
+#contact-form label > span { display: inline; color: var(--muted); font-weight: 400; }
+#contact-form input, #contact-form textarea {
+  width: 100%; padding: 13px 16px;
+  border: 1.5px solid var(--line); border-radius: 10px;
+  background: #fbfdfc; color: var(--ink); font-size: 14px; resize: vertical;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+#contact-form input:focus, #contact-form textarea:focus { border-color: var(--green); box-shadow: 0 0 0 4px rgba(10,107,94,.08); outline: 0; }
+.contact-submit { width: 100%; justify-content: center; }
+.contact-feedback {
+  margin: 16px 0 0; padding: 14px 16px;
+  border-left: 3px solid var(--green); border-radius: 0 10px 10px 0;
+  background: var(--green-light); color: #1e5c56; font-size: 13px; line-height: 1.6;
+}
+.whatsapp-fallback { display: block; margin-top: 10px; color: var(--green); font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.contact-disclaimer { margin: 16px 0 0; color: var(--muted); font-size: 12px; line-height: 1.6; }

@@ -1,0 +1,35 @@
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+[[redirects]]
+  from = "/acheter"
+  to = "/html/acheter.html"
+  status = 301
+
+[[redirects]]
+  from = "/louer"
+  to = "/html/louer.html"
+  status = 301
+
+[[redirects]]
+  from = "/contact"
+  to = "/html/contact.html"
+  status = 301
+
+[[redirects]]
+  from = "/favoris"
+  to = "/html/favoris.html"
+  status = 301
+
+[[redirects]]
+  from = "/pret"
+  to = "/html/pret.html"
+  status = 301

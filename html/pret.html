@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <base href="../">
+    <meta name="description" content="Simulez votre prêt immobilier : mensualité, coût total et taux d'endettement calculés instantanément selon votre profil.">
+    <meta name="theme-color" content="#f4f8f6">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <title>Simuler un prêt — Maison</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css" crossorigin="anonymous">
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous" defer></script>
+    <script src="js/data.js" defer></script>
+    <script src="js/favorites.js" defer></script>
+    <script src="js/contact.js" defer></script>
+    <script src="js/listings.js" defer></script>
+    <script src="js/navigation.js" defer></script>
+    <script src="js/features.js" defer></script>
+    <script src="js/loan.js" defer></script>
+    <script src="js/script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Aller au contenu</a>
+    <header class="site-header">
+      <a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">M</span><span>maison<span class="brand-dot">.</span></span></a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="main-nav" aria-label="Ouvrir le menu"><span></span><span></span></button>
+      <nav class="main-nav" id="main-nav" aria-label="Navigation principale">
+        <a href="html/acheter.html">Acheter</a>
+        <a href="html/louer.html">Louer</a>
+        <a href="html/favoris.html">Favoris</a>
+        <a href="html/contact.html">Contact</a>
+        <a href="html/pret.html" aria-current="page">Simuler un prêt</a>
+        <a href="index.html#apropos">À propos</a>
+      </nav>
+      <button class="header-cta" type="button" data-open-contact>Nous contacter <span aria-hidden="true">↗</span></button>
+    </header>
+
+    <main id="main-content">
+
+      <!-- Hero : pourquoi simuler ? -->
+      <section class="pret-hero">
+        <div class="pret-hero-copy">
+          <p class="eyebrow"><span class="eyebrow-line"></span> Avant de visiter</p>
+          <h1>Sachez ce que vous <em>pouvez vraiment</em> emprunter.</h1>
+          <p>Avant de tomber amoureux d'un bien, connaître votre mensualité réelle et votre taux d'endettement vous évite les mauvaises surprises — et vous donne un avantage en négociation.</p>
+          <div class="pret-hero-badges">
+            <span class="hero-badge"><i class="fa-solid fa-bolt fa-xs" aria-hidden="true"></i> Résultats instantanés</span>
+            <span class="hero-badge"><i class="fa-solid fa-lock fa-xs" aria-hidden="true"></i> Sans inscription</span>
+            <span class="hero-badge"><i class="fa-solid fa-circle-check fa-xs" aria-hidden="true"></i> 100 % gratuit</span>
+          </div>
+          <a class="text-link" href="#simulateur">Lancer la simulation <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="pret-hero-visual" aria-hidden="true">
+          <div class="pret-hero-card">
+            <p class="phc-label">Mensualité estimée</p>
+            <p class="phc-value">1 247 €<small>/mois</small></p>
+            <div class="phc-bar"><span style="width:68%"></span></div>
+            <div class="phc-legend"><span><i class="dot-c"></i> Capital</span><span><i class="dot-i"></i> Intérêts</span></div>
+          </div>
+          <div class="pret-hero-pill ok"><i class="fa-solid fa-circle-check" aria-hidden="true"></i> Taux d'endettement : 28 %</div>
+          <div class="pret-hero-pill tip"><i class="fa-solid fa-lightbulb" aria-hidden="true"></i> Apport ≥ 20 % — excellent profil</div>
+        </div>
+      </section>
+
+      <!-- Simulateur -->
+      <section class="loan-section container py-5" id="simulateur">
+        <div class="row g-4 align-items-start">
+          <div class="col-12 col-lg-6">
+            <div class="loan-card p-4">
+              <h2 class="loan-title">Votre simulation</h2>
+              <label class="loan-field">
+                <span>Montant du bien <output id="amount-out">250 000 €</output></span>
+                <input id="loan-amount" type="range" min="20000" max="1200000" step="5000" value="250000">
+              </label>
+              <label class="loan-field">
+                <span>Apport personnel <output id="down-out">25 000 €</output></span>
+                <input id="loan-down" type="range" min="0" max="400000" step="5000" value="25000">
+              </label>
+              <label class="loan-field">
+                <span>Durée <output id="years-out">20 ans</output></span>
+                <input id="loan-years" type="range" min="5" max="30" step="1" value="20">
+              </label>
+              <label class="loan-field">
+                <span>Taux annuel <output id="rate-out">3,5 %</output></span>
+                <input id="loan-rate" type="range" min="0.5" max="7" step="0.05" value="3.5">
+              </label>
+              <label class="loan-field loan-field--income">
+                <span>Votre revenu mensuel net <small>(pour le taux d'endettement)</small></span>
+                <div class="income-wrap">
+                  <i class="fa-solid fa-euro-sign" aria-hidden="true"></i>
+                  <input id="monthly-income" type="number" min="500" max="50000" step="100" placeholder="Ex. 3 500" inputmode="numeric">
+                </div>
+              </label>
+              <p class="loan-note"><i class="fa-solid fa-circle-info fa-xs" aria-hidden="true"></i> Simulation indicative, hors assurance et frais de dossier.</p>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="loan-results p-4 h-100">
+              <p class="loan-results-label">Mensualité estimée</p>
+              <p class="loan-monthly" id="loan-monthly">—</p>
+              <div class="loan-split" role="img" aria-label="Répartition entre capital et intérêts">
+                <span class="loan-split-capital" id="split-capital"></span>
+              </div>
+              <div class="loan-legend">
+                <span><i class="dot dot-capital" aria-hidden="true"></i> Capital <b id="capital-value">—</b></span>
+                <span><i class="dot dot-interest" aria-hidden="true"></i> Intérêts <b id="interest-value">—</b></span>
+              </div>
+              <ul class="loan-summary">
+                <li><span>Coût total du crédit</span><strong id="loan-cost">—</strong></li>
+                <li><span>Total remboursé</span><strong id="loan-total">—</strong></li>
+                <li><span>Nombre de mensualités</span><strong id="loan-count">—</strong></li>
+              </ul>
+              <!-- Taux d'endettement inline -->
+              <div class="debt-inline" id="debt-inline" hidden>
+                <div class="debt-inline-top">
+                  <span class="debt-inline-label">Taux d'endettement</span>
+                  <span class="debt-inline-value" id="debt-ratio">—</span>
+                </div>
+                <div class="debt-bar-wrap"><div class="debt-bar" id="debt-bar"></div></div>
+                <p class="debt-advice" id="debt-advice"></p>
+              </div>
+              <button class="search-button" type="button" data-open-contact>Discuter de mon financement <span aria-hidden="true">↗</span></button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Analyse en temps réel -->
+      <section class="loan-analysis-section reveal">
+        <div class="loan-analysis-heading">
+          <p class="eyebrow"><span class="eyebrow-line"></span> Analyse de votre simulation</p>
+          <h2>Ce que ça <em>signifie concrètement.</em></h2>
+        </div>
+        <div class="loan-analysis-grid">
+
+          <div class="loan-analysis-card" id="card-price">
+            <div class="lac-icon"><i class="fa-solid fa-house" aria-hidden="true"></i></div>
+            <div class="lac-body">
+              <p class="lac-label">Prix max du bien visé</p>
+              <p class="lac-value" id="max-price">—</p>
+              <p class="lac-sub" id="max-price-sub">Montant emprunté + apport personnel.</p>
+            </div>
+          </div>
+
+          <div class="loan-analysis-card" id="card-effort">
+            <div class="lac-icon"><i class="fa-solid fa-calendar-days" aria-hidden="true"></i></div>
+            <div class="lac-body">
+              <p class="lac-label">Effort total sur la durée</p>
+              <p class="lac-value" id="effort-value">—</p>
+              <p class="lac-sub" id="effort-sub"></p>
+            </div>
+          </div>
+
+          <div class="loan-analysis-card" id="card-debt">
+            <div class="lac-icon"><i class="fa-solid fa-gauge-high" aria-hidden="true"></i></div>
+            <div class="lac-body">
+              <p class="lac-label">Taux d'endettement</p>
+              <p class="lac-value" id="debt-ratio-card">—</p>
+              <p class="lac-sub">Saisissez votre revenu dans le formulaire pour voir votre taux.</p>
+              <p class="lac-advice" id="debt-advice-card"></p>
+            </div>
+          </div>
+
+          <div class="loan-analysis-card" id="card-tip">
+            <div class="lac-icon"><i class="fa-solid fa-lightbulb" aria-hidden="true"></i></div>
+            <div class="lac-body">
+              <p class="lac-label">Conseil personnalisé</p>
+              <p class="lac-advice lac-advice--main" id="main-tip">Ajustez les curseurs pour obtenir un conseil adapté à votre simulation.</p>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- CTA bas de page -->
+      <section class="page-cta-section reveal">
+        <div class="page-cta-inner">
+          <p class="eyebrow"><span class="eyebrow-line"></span> Prêt à passer à l'étape suivante ?</p>
+          <h2>Trouvez le bien <em>qui vous correspond.</em></h2>
+          <p>Votre simulation en poche, explorez nos annonces et contactez-nous pour organiser une visite.</p>
+          <div class="page-cta-actions">
+            <a class="search-button" href="html/acheter.html">Voir les biens à vendre <span aria-hidden="true">→</span></a>
+            <button class="outline-button" type="button" data-open-contact>Nous contacter <span aria-hidden="true">↗</span></button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <dialog class="contact-dialog" id="contact-dialog" aria-labelledby="contact-dialog-title"><button class="dialog-close" type="button" aria-label="Fermer le formulaire">×</button><div class="contact-content"><p class="eyebrow"><span class="eyebrow-line"></span> Parlons de votre projet</p><h2 id="contact-dialog-title">On vous écoute.</h2><p class="contact-context" id="contact-context">Laissez-nous un message.</p><form id="contact-form"><label>Votre nom<input name="name" type="text" autocomplete="name" required placeholder="Ex. Camille Martin"></label><label>Votre e-mail<input name="email" type="email" autocomplete="email" required placeholder="vous@exemple.fr"></label><label>Votre téléphone <span>(facultatif)</span><input name="phone" type="tel" autocomplete="tel"></label><label>Votre message<textarea name="message" rows="4" required placeholder="Parlez-nous de votre projet…"></textarea></label><button class="search-button contact-submit" type="submit">Ouvrir WhatsApp <span aria-hidden="true">↗</span></button></form><p class="contact-feedback" id="contact-feedback" role="status" hidden></p><a class="whatsapp-fallback" id="whatsapp-link" href="#" data-whatsapp-link target="_blank" rel="noopener noreferrer" hidden></a><p class="contact-disclaimer">WhatsApp s'ouvrira avec votre message déjà préparé.</p></div></dialog>
+
+    <footer class="site-footer"><div class="footer-top"><div class="footer-brand-col"><a class="brand" href="index.html"><span class="brand-mark" aria-hidden="true">M</span><span>maison<span class="brand-dot">.</span></span></a><p class="footer-tagline">Des lieux qui font du bien.</p><div class="social-links" role="group" aria-label="Réseaux sociaux"><a href="#" data-whatsapp-link target="_blank" rel="noopener noreferrer" aria-label="WhatsApp"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 3.5A11.8 11.8 0 0 0 12.1 0C5.5 0 .1 5.3.1 11.9c0 2.1.6 4.1 1.6 5.9L0 24l6.4-1.7a12 12 0 0 0 5.7 1.4h.1c6.6 0 12-5.3 12-11.9 0-3.1-1.3-6.1-3.7-8.3ZM12.1 21.7c-1.8 0-3.5-.5-5-1.4l-.4-.2-3.8 1 1-3.7-.3-.4a9.7 9.7 0 0 1-1.5-5.1c0-5.4 4.5-9.8 10-9.8 2.6 0 5 1 6.9 2.8a9.6 9.6 0 0 1 2.9 7c0 5.4-4.5 9.8-9.9 9.8Zm5.5-7.3c-.3-.2-1.8-.9-2.1-1-.3-.1-.5-.2-.7.2-.2.3-.8 1-1 1.2-.2.2-.4.2-.7.1-.3-.2-1.3-.5-2.5-1.6-.9-.8-1.5-1.8-1.7-2.1-.2-.3 0-.5.1-.7l.5-.5.3-.5c.1-.2 0-.4 0-.5l-.9-2.2c-.2-.6-.5-.5-.7-.5H7.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.4s1 2.8 1.1 3c.1.2 2 3.1 4.9 4.3.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.8-.7 2-1.4.3-.7.3-1.3.2-1.4 0-.1-.2-.2-.5-.4Z"/></svg></a><a href="#" data-facebook-link target="_blank" rel="noopener noreferrer" aria-label="Facebook"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M24 12a12 12 0 1 0-13.9 11.9v-8.4H7.1V12h3V9.3c0-3 1.8-4.7 4.5-4.7 1.3 0 2.6.2 2.6.2v2.9h-1.5c-1.5 0-2 .9-2 1.9V12H17l-.5 3.5h-2.8v8.4A12 12 0 0 0 24 12Z"/></svg></a><a href="#" data-instagram-link target="_blank" rel="noopener noreferrer" aria-label="Instagram"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.1 0h9.8A7.1 7.1 0 0 1 24 7.1v9.8a7.1 7.1 0 0 1-7.1 7.1H7.1A7.1 7.1 0 0 1 0 16.9V7.1A7.1 7.1 0 0 1 7.1 0Zm0 2.4a4.7 4.7 0 0 0-4.7 4.7v9.8a4.7 4.7 0 0 0 4.7 4.7h9.8a4.7 4.7 0 0 0 4.7-4.7V7.1a4.7 4.7 0 0 0-4.7-4.7H7.1Zm10.3 1.8a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8ZM12 5.8a6.2 6.2 0 1 1 0 12.4 6.2 6.2 0 0 1 0-12.4Zm0 2.4a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Z"/></svg></a></div></div><div><p class="footer-col-title">Annonces</p><nav class="footer-col-links"><a href="html/acheter.html">Acheter</a><a href="html/louer.html">Louer</a><a href="html/favoris.html">Mes favoris</a></nav></div><div><p class="footer-col-title">Services</p><nav class="footer-col-links"><a href="html/pret.html">Simuler un prêt</a><a href="html/contact.html">Contact</a><a href="index.html#apropos">À propos</a></nav></div><div><p class="footer-col-title">Nous joindre</p><div class="footer-col-links"><a href="#" data-whatsapp-link target="_blank" rel="noopener noreferrer">WhatsApp</a><a href="#" data-facebook-link target="_blank" rel="noopener noreferrer">Facebook</a><a href="#" data-instagram-link target="_blank" rel="noopener noreferrer">Instagram</a></div></div></div><div class="footer-bottom"><small>© <span id="current-year"></span> Maison. Tous droits réservés.</small><small>Site immobilier statique</small></div></footer>
+  </body>
+</html>

@@ -1,0 +1,73 @@
+@media (max-width: 900px) {
+  .site-header { padding: 0 5%; }
+  .hero { min-height: 500px; padding: 65px 6%; gap: 4%; }
+  .hero-visual { height: 360px; margin-right: 2%; }
+  .hero-note { right: -15px; }
+  .hero-side-label { display: none; }
+  .listing-section { padding: 70px 6% 80px; }
+  .search-panel { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .search-actions { grid-column: 1 / -1; }
+  .property-grid { --bs-gutter-y: 2rem; }
+  .about-section { gap: 6%; padding: 75px 7%; }
+  .about-image { height: 330px; }
+  .footer-top { grid-template-columns: 1fr 1fr; gap: 32px; padding: 50px 5% 40px; }
+  .footer-bottom { padding: 18px 5%; }
+  .contact-options { padding: 55px 7% 75px; }
+  .stats-section { padding: 60px 6%; }
+}
+
+@media (max-width: 620px) {
+  .site-header { height: 70px; padding: 0 6%; }
+  .brand { font-size: 19px; }
+  .menu-toggle { width: 38px; height: 38px; display: grid; align-content: center; justify-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 6px; background: transparent; }
+  .menu-toggle span { width: 16px; height: 1.5px; background: var(--ink); border-radius: 2px; transition: transform .25s ease, opacity .25s ease; }
+  .menu-toggle[aria-expanded="true"] span:first-child { transform: translateY(7.5px) rotate(45deg); }
+  .menu-toggle[aria-expanded="true"] span:last-child { transform: translateY(-7.5px) rotate(-45deg); }
+  .main-nav { position: absolute; top: 69px; right: 0; left: 0; display: none; gap: 0; margin: 0; padding: 10px 6% 17px; border-bottom: 1px solid var(--line); background: rgba(244,248,246,.98); backdrop-filter: blur(14px); }
+  .main-nav.is-open { display: grid; }
+  .main-nav a { padding: 13px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .main-nav a:last-child { border-bottom: 0; }
+  .header-cta { margin-left: auto; margin-right: 15px; padding: 10px 14px; font-size: 12px; }
+  .menu-toggle { order: 3; }
+  .hero { min-height: auto; grid-template-columns: 1fr; gap: 35px; padding: 58px 6% 60px; }
+  h1 { font-size: clamp(43px, 11vw, 58px); }
+  .hero-description { max-width: 330px; margin-top: 17px; font-size: 14px; }
+  .hero-visual { height: 285px; margin-right: 10px; }
+  .hero-note { right: -10px; bottom: 19px; padding: 12px 15px; }
+  .hero-index { bottom: -23px; }
+  .listing-section { padding: 65px 6% 70px; }
+  .section-heading { display: block; margin-bottom: 26px; }
+  .section-heading h2, .about-copy h2 { font-size: 39px; }
+  .section-intro { margin: 16px 0 0; }
+  .search-panel { grid-template-columns: 1fr; gap: 17px; padding: 20px; }
+  .search-field { padding: 0 0 14px; border-bottom: 1px solid var(--line); }
+  .search-actions { grid-column: auto; display: grid; justify-items: center; gap: 8px; padding-top: 0; border-top: 0; }
+  .search-button { width: 100%; }
+  .listing-toolbar { align-items: flex-start; flex-direction: column; gap: 17px; margin: 31px 0 18px; }
+  .filter-tabs { width: 100%; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .filter-tab { font-size: 12px; white-space: nowrap; }
+  .listing-controls { width: 100%; justify-content: space-between; }
+  .sort-control { gap: 2px; }
+  .property-grid { --bs-gutter-y: 1.875rem; }
+  .property-image { height: clamp(215px, 63vw, 310px); }
+  .property-name { font-size: 21px; }
+  .dialog-image { height: 230px; }
+  .dialog-content, .contact-content { padding: 22px 20px 26px; }
+  .dialog-content h2, .contact-content h2 { font-size: 30px; }
+  .dialog-stats { grid-template-columns: repeat(2, 1fr); }
+  .about-section { grid-template-columns: 1fr; gap: 32px; padding: 65px 6%; }
+  .about-image { height: 275px; }
+  .footer-top { grid-template-columns: 1fr; gap: 28px; padding: 40px 6% 32px; }
+  .footer-bottom { flex-direction: column; align-items: flex-start; gap: 14px; padding: 18px 6%; }
+  .page-hero { padding: 58px 6% 48px; }
+  .contact-options { padding: 45px 6% 65px; }
+  .contact-option-card { padding: 24px; }
+  .compare-content { padding: 26px 18px; overflow-x: auto; }
+  .compare-content h2 { font-size: 29px; }
+  .stats-section { padding: 50px 6%; }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
