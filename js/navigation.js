@@ -18,6 +18,19 @@
       });
     });
 
+    // Les pages de html/ utilisent <base href="../"> : on gère les ancres #... nous-mêmes
+    document.querySelectorAll('a[href^="#"]').forEach((link) => {
+      const id = link.getAttribute("href").slice(1);
+      if (!id) return;
+      link.addEventListener("click", (event) => {
+        const target = document.getElementById(id);
+        if (!target) return;
+        event.preventDefault();
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (target.tabIndex < 0) target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+      });
+    });
     document.querySelectorAll(".dialog-close").forEach((button) => {
       button.addEventListener("click", () => button.closest("dialog").close());
     });

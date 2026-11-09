@@ -45,6 +45,11 @@
         "",
         data.get("message")
       ].filter(Boolean).join("\n");
+      // Enregistre la demande dans la base (sans bloquer l'ouverture de WhatsApp)
+      fetch("/api/messages", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: data.get("name"), email: data.get("email"), phone: data.get("phone") || "", property: form.dataset.propertyTitle || "", message: data.get("message") })
+      }).catch(() => {});
       const url = `https://wa.me/${app.whatsappPhone}?text=${encodeURIComponent(message)}`;
 
       whatsappLink.href = url;

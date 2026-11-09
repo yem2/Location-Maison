@@ -35,6 +35,8 @@
     });
     favoritesFilter.setAttribute("aria-pressed", String(favoritesOnly));
 
+    const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+
     function normalize(value) {
       return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr");
     }
@@ -55,9 +57,9 @@
         const inEur = property.price * (rates[property.currency] || 1);
         const converted = inEur / (rates[sel.code] || 1);
         const fmt = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
-        return `${fmt.format(Math.round(converted))} ${sel.symbol}${property.priceSuffix || ""} <small style="color:var(--muted);font-size:11px;font-weight:400">(${new Intl.NumberFormat("fr-FR").format(property.price)} ${property.currencySymbol})</small>`;
+        return `${fmt.format(Math.round(converted))} ${esc(sel.symbol)}${esc(property.priceSuffix || "")} <small style="color:var(--muted);font-size:11px;font-weight:400">(${new Intl.NumberFormat("fr-FR").format(property.price)} ${esc(property.currencySymbol)})</small>`;
       }
-      return `${new Intl.NumberFormat("fr-FR").format(property.price)} ${property.currencySymbol || "€"}${property.priceSuffix || ""}`;
+      return `${new Intl.NumberFormat("fr-FR").format(property.price)} ${esc(property.currencySymbol || "€")}${esc(property.priceSuffix || "")}`;
     }
 
     function visibleProperties() {
@@ -99,22 +101,22 @@
       grid.innerHTML = results.map((property) => `
         <article class="property-card col">
           <div class="property-image">
-            <img src="${property.image}" alt="${property.alt}" width="1400" height="933" loading="lazy" decoding="async">
-            <span class="property-badge">${property.label}</span>
-            <button class="favorite-button" type="button" data-favorite="${property.id}"
-              aria-label="${favorites.has(property.id) ? 'Retirer des' : 'Ajouter aux'} favoris : ${property.title}"
+            <img src="${esc(property.image)}" alt="${esc(property.alt)}" width="1400" height="933" loading="lazy" decoding="async">
+            <span class="property-badge">${esc(property.label)}</span>
+            <button class="favorite-button" type="button" data-favorite="${esc(property.id)}"
+              aria-label="${favorites.has(property.id) ? 'Retirer des' : 'Ajouter aux'} favoris : ${esc(property.title)}"
               aria-pressed="${favorites.has(property.id)}">♡</button>
           </div>
           <div class="property-info">
-            <p class="property-location">${property.location}</p>
-            <h3 class="property-name">${property.title}</h3>
-            <div class="property-details"><span>${property.rooms} pièces</span><span>${property.area} m²</span><span>${property.kindLabel}</span></div>
+            <p class="property-location">${esc(property.location)}</p>
+            <h3 class="property-name">${esc(property.title)}</h3>
+            <div class="property-details"><span>${property.rooms} pièces</span><span>${property.area} m²</span><span>${esc(property.kindLabel)}</span></div>
             <div class="property-bottom">
               <span class="property-price">${formatPrice(property)}</span>
               <span class="property-type">${property.operation === "sale" ? "Vente" : "Location"}</span>
             </div>
-            <button class="compare-property" type="button" data-compare="${property.id}" aria-pressed="${compared.has(property.id)}">${compared.has(property.id) ? "✓ Ajouté au comparateur" : "＋ Comparer"}</button>
-            <button class="details-button" type="button" data-details="${property.id}">Voir le détail <span aria-hidden="true">→</span></button>
+            <button class="compare-property" type="button" data-compare="${esc(property.id)}" aria-pressed="${compared.has(property.id)}">${compared.has(property.id) ? "✓ Ajouté au comparateur" : "＋ Comparer"}</button>
+            <button class="details-button" type="button" data-details="${esc(property.id)}">Voir le détail <span aria-hidden="true">→</span></button>
           </div>
         </article>
       `).join("");
@@ -159,13 +161,13 @@
 
     function showDetails(property) {
       const features = property.features.map((feature) => `
-        <li><button class="feature-link" type="button" data-feature="${feature}">${feature}<span aria-hidden="true"> ↗</span></button></li>
+        <li><button class="feature-link" type="button" data-feature="${esc(feature)}">${esc(feature)}<span aria-hidden="true"> ↗</span></button></li>
       `).join("");
       propertyDetail.innerHTML = `
-        <img class="dialog-image" src="${property.image}" alt="${property.alt}" width="1400" height="933" decoding="async">
+        <img class="dialog-image" src="${esc(property.image)}" alt="${esc(property.alt)}" width="1400" height="933" decoding="async">
         <div class="dialog-content">
-          <p class="property-location">${property.location} · ${property.kindLabel}</p>
-          <h2 id="dialog-title">${property.title}</h2>
+          <p class="property-location">${esc(property.location)} · ${esc(property.kindLabel)}</p>
+          <h2 id="dialog-title">${esc(property.title)}</h2>
           <p class="dialog-price">${formatPrice(property)}</p>
           <div class="dialog-stats">
             <span><strong>${property.rooms}</strong> pièces</span>
@@ -173,14 +175,14 @@
             <span><strong>${property.bathrooms}</strong> salle${property.bathrooms > 1 ? "s" : ""} de bain</span>
             <span><strong>${property.area}</strong> m²</span>
           </div>
-          <p class="dialog-description">${property.description}</p>
+          <p class="dialog-description">${esc(property.description)}</p>
           <h3>Les petits plus — cliquez pour trouver un bien similaire</h3>
           <ul class="feature-list">${features}</ul>
           <div class="detail-actions">
-            <button class="outline-button share-property" type="button" data-share="${property.id}">Partager ce bien <span aria-hidden="true">↗</span></button>
+            <button class="outline-button share-property" type="button" data-share="${esc(property.id)}">Partager ce bien <span aria-hidden="true">↗</span></button>
             <p class="share-feedback" role="status" hidden></p>
           </div>
-          <button class="search-button dialog-contact" type="button" data-inquire="${property.id}">Demander des informations <span aria-hidden="true">↗</span></button>
+          <button class="search-button dialog-contact" type="button" data-inquire="${esc(property.id)}">Demander des informations <span aria-hidden="true">↗</span></button>
         </div>
       `;
       propertyDialog.showModal();
@@ -214,10 +216,10 @@
         const selected = properties.filter((property) => compared.has(property.id));
         compareResults.innerHTML = `
           <div class="comparison-table">
-            <div class="comparison-row comparison-heading"><span>Critère</span>${selected.map((property) => `<strong>${property.title}</strong>`).join("")}</div>
+            <div class="comparison-row comparison-heading"><span>Critère</span>${selected.map((property) => `<strong>${esc(property.title)}</strong>`).join("")}</div>
             <div class="comparison-row"><span>Prix</span>${selected.map((property) => `<span>${formatPrice(property)}</span>`).join("")}</div>
-            <div class="comparison-row"><span>Localisation</span>${selected.map((property) => `<span>${property.location}</span>`).join("")}</div>
-            <div class="comparison-row"><span>Type</span>${selected.map((property) => `<span>${property.kindLabel}</span>`).join("")}</div>
+            <div class="comparison-row"><span>Localisation</span>${selected.map((property) => `<span>${esc(property.location)}</span>`).join("")}</div>
+            <div class="comparison-row"><span>Type</span>${selected.map((property) => `<span>${esc(property.kindLabel)}</span>`).join("")}</div>
             <div class="comparison-row"><span>Pièces</span>${selected.map((property) => `<span>${property.rooms}</span>`).join("")}</div>
             <div class="comparison-row"><span>Chambres</span>${selected.map((property) => `<span>${property.bedrooms}</span>`).join("")}</div>
             <div class="comparison-row"><span>Surface</span>${selected.map((property) => `<span>${property.area} m²</span>`).join("")}</div>

@@ -106,3 +106,16 @@ window.Maison = {
     }
   ]
 };
+
+// Charge les annonces depuis la base (API). En cas d'échec, les annonces d'exemple ci-dessus restent affichées.
+window.Maison.loadRemote = async function () {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const response = await fetch("/api/properties", { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!response.ok) return;
+    const rows = await response.json();
+    if (Array.isArray(rows)) window.Maison.properties = rows;
+  } catch (error) { /* site statique : on garde les données locales */ }
+};

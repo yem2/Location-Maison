@@ -1,0 +1,74 @@
+import { neon } from "@neondatabase/serverless";
+import crypto from "node:crypto";
+
+export const sql = neon(process.env.DATABASE_URL);
+
+export function send(res, code, data) {
+  res.status(code).json(data);
+}
+
+export function hashPassword(pw) {
+  const salt = crypto.randomBytes(16), N = 16384, r = 8, p = 1;
+  const h = crypto.scryptSync(pw, salt, 64, { N, r, p });
+  return `scrypt$${N}$${r}$${p}$${salt.toString("base64")}$${h.toString("base64")}`;
+}
+
+export function verifyPassword(pw, stored) {
+  try {
+    const [alg, N, r, p, salt, hash] = stored.split("$");
+    if (alg !== "scrypt") return false;
+    const h = crypto.scryptSync(pw, Buffer.from(salt, "base64"), 64, { N: +N, r: +r, p: +p });
+    const e = Buffer.from(hash, "base64");
+    return e.length === h.length && crypto.timingSafeEqual(e, h);
+  } catch { return false; }
+}
+
+const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+
+export function cookie(req, name) {
+  const m = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith(name + "="));
+  return m ? decodeURIComponent(m.slice(name.length + 1)) : "";
+}
+
+export async function createSession(res, userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await sql`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${sha(token)}, ${userId}, now() + interval '8 hours')`;
+  await sql`DELETE FROM sessions WHERE expires_at < now()`;
+  res.setHeader("Set-Cookie", `sid=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`);
+}
+
+export async function destroySession(req, res) {
+  const t = cookie(req, "sid");
+  if (t) await sql`DELETE FROM sessions WHERE token_hash = ${sha(t)}`;
+  res.setHeader("Set-Cookie", "sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+}
+
+export async function currentUser(req) {
+  const t = cookie(req, "sid");
+  if (!t) return null;
+  const rows = await sql`SELECT u.id, u.email, u.name, u.role FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND u.active`;
+  return rows[0] || null;
+}
+
+// Protection CSRF : requête same-origin uniquement pour les écritures
+export function sameOrigin(req) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
+  const o = req.headers.origin;
+  return !!o && new URL(o).host === req.headers.host;
+}
+
+// Exige un utilisateur connecté (et un rôle si demandé). Renvoie l'utilisateur ou null (réponse déjà envoyée).
+export async function requireUser(req, res, role) {
+  if (!sameOrigin(req)) { send(res, 403, { error: "Origine refusée" }); return null; }
+  const u = await currentUser(req);
+  if (!u) { send(res, 401, { error: "Non connecté" }); return null; }
+  if (role && u.role !== role) { send(res, 403, { error: "Droits insuffisants" }); return null; }
+  return u;
+}
+
+export const audit = (userId, action, detail = "") =>
+  sql`INSERT INTO audit_log (user_id, action, detail) VALUES (${userId}, ${action}, ${String(detail).slice(0, 300)})`;
+
+export const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+export const emailOk = (e) => /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(e);

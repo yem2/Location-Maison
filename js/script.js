@@ -7,13 +7,16 @@
    4. les nouvelles fonctionnalités (features.js)
    5. la calculatrice de prêt si on est sur pret.html (loan.js)
    ============================================================ */
-window.Maison.initContact();
-window.Maison.initListings();
-window.Maison.initNavigation();
-window.Maison.initFeatures();
+(async function start() {
+  window.Maison.initContact();
+  if (document.querySelector("#property-grid") && window.Maison.loadRemote) await window.Maison.loadRemote();
+  window.Maison.initListings();
+  window.Maison.initNavigation();
+  window.Maison.initFeatures();
 
-// Calculatrice de prêt : ne fait rien si les curseurs sont absents
-if (window.Maison.initLoan) window.Maison.initLoan();
+  // Calculatrice de prêt : ne fait rien si les curseurs sont absents
+  if (window.Maison.initLoan) window.Maison.initLoan();
+})();
 
 // Année dynamique dans le pied de page de chaque page
 const yearElement = document.querySelector("#current-year");
