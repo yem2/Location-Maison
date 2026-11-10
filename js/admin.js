@@ -1,6 +1,6 @@
 (function () {
   const app = document.getElementById("app");
-  let me = null, props = [], tab = "annonces";
+  let me = null, props = [], tab = "dashboard";
   const SYM = { EUR: "€", USD: "$", XAF: "FCFA", MAD: "DH", CHF: "CHF", CAD: "CA$", GBP: "£", AED: "AED" };
 
   function h(tag, attrs, ...kids) {
@@ -17,7 +17,7 @@
     const r = await fetch(path, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
     if (r.status === 401 && me) { me = null; render(); }
-    if (!r.ok) throw new Error(data.error || "Erreur " + r.status);
+    if (!r.ok) { const e = new Error(data.error || "Erreur " + r.status); e.data = data; throw e; }
     return data;
   }
   const field = (label, input) => h("div", {}, h("label", {}, label), input);
@@ -25,7 +25,7 @@
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const ACT = { signup: "a créé son compte", login: "s’est connecté", view_property: "a consulté le bien", order: "a demandé une réservation", order_blocked: "a tenté de réserver un bien indisponible", order_cancel: "a annulé sa demande" };
   const AVL = { available: "Disponible", reserved: "Réservé", unavailable: "Indisponible" };
-  let counts = { notifications: 0, pendingOrders: 0 };
+  let counts = { notifications: 0, pendingOrders: 0, chat: 0, suggestions: 0 };
 
   // Réduit la photo (1600 px max, JPEG) avant l'envoi
   async function shrink(file) {
@@ -49,12 +49,14 @@
     const err = h("p", { class: "err", role: "alert" });
     const email = h("input", { type: "email", required: true, autocomplete: "username" });
     const pw = h("input", { type: "password", required: true, autocomplete: "current-password" });
+    const code = h("input", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8, placeholder: "123456" });
+    const codeBox = h("div", { hidden: true }, h("br"), field("Code de double authentification", code));
     const form = h("form", { class: "card login", onsubmit: async (e) => {
       e.preventDefault(); err.textContent = "";
-      try { me = (await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value })).user; await load(); render(); }
-      catch (x) { err.textContent = x.message; }
+      try { me = (await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value, code: code.value })).user; await load(); render(); }
+      catch (x) { err.textContent = x.message; if (x.data && x.data.needCode) { codeBox.hidden = false; code.focus(); } }
     } }, h("h1", {}, "Administration"), h("p", { class: "muted" }, "Connexion réservée aux administrateurs."),
-      field("E-mail", email), h("br"), field("Mot de passe", pw), err, h("button", { type: "submit" }, "Se connecter"));
+      field("E-mail", email), h("br"), field("Mot de passe", pw), codeBox, err, h("button", { type: "submit" }, "Se connecter"));
     return form;
   }
 
@@ -189,22 +191,161 @@
         h("span", { class: "muted" }, when(x.created_at))))]);
   }
 
-  async function render() {
-    if (!me) { app.replaceChildren(loginView()); return; }
-    const t = (id, label) => h("button", { class: id === tab || (tab === "form" && id === "annonces") ? "on" : "ghost", onclick: () => { tab = id; window._cust = null; render(); } }, label);
-    try { counts = await api("/api/console?a=counts"); } catch (e) {}
-    const sup = me.role === "super_admin";
-    const tabs = h("div", { class: "tabs" }, t("annonces", "Annonces"), t("orders", "Commandes" + (counts.pendingOrders ? " (" + counts.pendingOrders + ")" : "")),
-      t("notifs", "Notifications" + (counts.notifications ? " (" + counts.notifications + ")" : "")), t("messages", "Messages"),
-      sup ? t("clients", "Clients") : "", sup ? t("activity", "Activité") : "", sup ? t("admins", "Administrateurs") : "");
-    const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" ? await adminsView()
-      : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView() : listView();
-    app.replaceChildren(
-      h("div", { class: "top" }, h("div", {}, h("h1", {}, "Administration"), h("span", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur"))),
-        h("div", { class: "row" }, h("a", { class: "btn ghost", href: "/", style: "text-decoration:none;border:1px solid var(--line);color:var(--ink);background:transparent" }, "Voir le site"),
-          h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
-      tabs, body);
+  let pollTimer = null;
+  const stopPoll = () => { clearInterval(pollTimer); pollTimer = null; };
+  const nf = (n) => new Intl.NumberFormat("fr-FR").format(Math.round(n));
+  const snip = (s) => String(s || "").replace(/\s+/g, " ").slice(0, 70);
+
+  function svgEl(tag, attrs) { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; }
+  function barChart(days) {
+    const W = 640, H = 190, pad = 24, max = Math.max(1, ...days.map((d) => Math.max(d.actions, d.orders)));
+    const s = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "Activité des 14 derniers jours" });
+    const bw = (W - pad * 2) / days.length;
+    s.append(svgEl("line", { x1: pad, y1: H - pad, x2: W - pad, y2: H - pad, stroke: "currentColor", opacity: ".2" }));
+    days.forEach((d, i) => {
+      const x = pad + i * bw, hA = (d.actions / max) * (H - pad * 2 - 6), hO = (d.orders / max) * (H - pad * 2 - 6);
+      s.append(svgEl("rect", { x: x + 3, y: H - pad - hA, width: bw / 2 - 4, height: hA, rx: 3, fill: "#4f46e5" }));
+      s.append(svgEl("rect", { x: x + bw / 2, y: H - pad - hO, width: bw / 2 - 4, height: hO, rx: 3, fill: "#f59e0b" }));
+      if (i % 2 === 0) { const tx = svgEl("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "currentColor", opacity: ".6" }); tx.textContent = d.day; s.append(tx); }
+    });
+    return s;
+  }
+  const meter = (label, n, total) => h("div", {}, h("div", { class: "row" }, h("span", {}, label), h("strong", {}, String(n))), h("div", { class: "bar" }, h("i", { style: "width:" + (total ? (n / total) * 100 : 0) + "%" })));
+
+  function dashboardView() {
+    const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
+    api("/api/console?a=stats").then((s) => {
+      const kpi = (l, v, sub, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), sub ? h("div", { class: "kpi-s" }, sub) : "");
+      const rev = s.revenue.length ? s.revenue.map((r) => nf(r.total) + " " + r.currency).join(" · ") : "0";
+      box.replaceChildren(
+        me.role === "super_admin" && !me.totp_enabled ? h("div", { class: "banner" }, h("strong", {}, "Sécurité : "), "activez la double authentification pour protéger le compte super administrateur. ", h("button", { class: "ghost", onclick: () => { tab = "profile"; render(); } }, "Activer maintenant")) : "",
+        h("div", { class: "kpis" },
+          kpi("Annonces", s.properties.total, s.properties.available + " disponibles · " + s.properties.reserved + " réservées"),
+          kpi("Clients inscrits", s.customers.total, "+" + s.customers.week + " cette semaine"),
+          kpi("Demandes en attente", s.orders.pending, s.orders.confirmed + " acceptées", s.orders.pending > 0),
+          kpi("Acomptes encaissés", rev, s.orders.cash_pending + " espèces à encaisser"),
+          kpi("Messages non lus", counts.chat + s.messagesUnread, counts.chat + " chat · " + s.messagesUnread + " contact", counts.chat + s.messagesUnread > 0),
+          kpi("Suggestions", counts.suggestions, "non lues")),
+        h("div", { class: "two" },
+          h("div", { class: "card" }, h("h2", {}, "Activité des 14 derniers jours"), barChart(s.days),
+            h("div", { class: "legend" }, h("span", {}, h("b", { style: "background:#4f46e5" }), "Actions des clients"), h("span", {}, h("b", { style: "background:#f59e0b" }), "Demandes de réservation"))),
+          h("div", { class: "card" }, h("h2", {}, "Disponibilité des biens"),
+            meter("Disponibles", s.properties.available, s.properties.total), meter("Réservés", s.properties.reserved, s.properties.total), meter("Indisponibles", s.properties.unavailable, s.properties.total),
+            h("h2", { style: "margin-top:14px" }, "Demandes"), meter("En attente", s.orders.pending, s.orders.pending + s.orders.confirmed + s.orders.rejected), meter("Acceptées", s.orders.confirmed, s.orders.pending + s.orders.confirmed + s.orders.rejected), meter("Refusées", s.orders.rejected, s.orders.pending + s.orders.confirmed + s.orders.rejected))),
+        h("div", { class: "card" }, h("h2", {}, "Derniers événements"), ...(s.recent.length ? s.recent.map((n) => h("div", { class: "row", style: "padding:6px 0;border-bottom:1px solid var(--line)" }, h("span", {}, h("strong", {}, n.title), " ", h("span", { class: "muted" }, n.detail)), h("span", { class: "muted" }, when(n.created_at)))) : [h("p", { class: "muted" }, "Rien pour le moment.")])));
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
+    return box;
   }
 
-  api("/api/auth?a=me").then(async (r) => { me = r.user; await load(); render(); }).catch(() => render());
+  function chatView() {
+    let cur = 0;
+    const list = h("div", { class: "chat-list" }), pane = h("div", { class: "chat-pane" }, h("p", { class: "muted", style: "padding:16px" }, "Sélectionnez une conversation."));
+    let msgsBox = null, lastId = 0;
+    async function loadList() {
+      try {
+        const rows = await api("/api/chat?a=admin_threads");
+        list.replaceChildren(...(rows.length ? rows.map((t) => h("button", { class: "thread" + (t.id === cur ? " on" : ""), onclick: () => open(t) },
+          h("div", { class: "row" }, h("strong", {}, t.kind === "support" ? t.a_name : t.a_name + " ↔ " + t.b_name), t.unread ? h("span", { class: "badge" }, String(t.unread)) : ""),
+          h("small", {}, (t.kind === "direct" ? "Privé · " : "") + snip(t.last_body)))) : [h("p", { class: "muted", style: "padding:14px" }, "Aucune conversation.")]));
+      } catch (e) {}
+    }
+    async function loadMsgs(first) {
+      if (!cur || !msgsBox) return;
+      try {
+        const rows = await api("/api/chat?a=admin_messages&thread=" + cur);
+        if (!first && rows.length && rows[rows.length - 1].id === lastId) return;
+        lastId = rows.length ? rows[rows.length - 1].id : 0;
+        msgsBox.replaceChildren(...rows.map((m) => h("div", { class: "msg" + (m.mine ? " mine" : "") }, h("small", {}, m.who + " · " + when(m.created_at)), m.body)));
+        msgsBox.scrollTop = msgsBox.scrollHeight;
+      } catch (e) {}
+    }
+    function open(t) {
+      cur = t.id; lastId = 0;
+      msgsBox = h("div", { class: "msgs" });
+      const input = h("input", { placeholder: "Votre réponse…", maxlength: 2000 });
+      const form = t.kind === "support" ? h("form", { class: "send", onsubmit: async (e) => { e.preventDefault(); if (!input.value.trim()) return; const v = input.value; input.value = ""; try { await api("/api/chat?a=admin_send", "POST", { thread: cur, body: v }); await loadMsgs(true); loadList(); } catch (x) { alert(x.message); } } }, input, h("button", { type: "submit" }, "Envoyer"))
+        : h("p", { class: "muted", style: "padding:10px" }, "Conversation privée entre deux clients : lecture seule (modération).");
+      pane.replaceChildren(h("div", { class: "row", style: "padding:12px;border-bottom:1px solid var(--line)" }, h("strong", {}, t.kind === "support" ? t.a_name + " · " + (t.a_email || "") : t.a_name + " ↔ " + t.b_name)), msgsBox, form);
+      loadMsgs(true); loadList();
+    }
+    loadList(); pollTimer = setInterval(() => { loadList(); loadMsgs(false); }, 6000);
+    return h("div", {}, h("h2", {}, "Messagerie"), h("div", { class: "chat" }, list, pane));
+  }
+
+  function suggestionsView() {
+    return lazy("/api/console?a=suggestions", (rows, reload) => [h("h2", {}, rows.length + " suggestion(s)"), ...rows.map((s) => h("div", { class: "card" + (s.is_read ? "" : " unread") },
+      h("div", { class: "row" }, h("strong", {}, s.name || "Client"), h("span", { class: "muted" }, when(s.created_at))), h("div", { class: "muted" }, s.email || ""),
+      h("p", { style: "white-space:pre-wrap" }, s.message),
+      h("button", { class: "ghost", onclick: async () => { await api("/api/console?a=suggestions&id=" + s.id, "PATCH", { read: !s.is_read }); reload(); } }, s.is_read ? "Marquer non lue" : "Marquer lue")))]);
+  }
+  function auditView() {
+    return lazy("/api/console?a=audit", (rows) => [h("h2", {}, "Journal de sécurité (" + rows.length + ")"), ...rows.map((l) => h("div", { class: "card row" },
+      h("div", {}, h("strong", {}, l.action), " ", h("span", { class: "muted" }, l.detail || ""), h("br"), h("span", { class: "muted" }, l.email || "système")), h("span", { class: "muted" }, when(l.created_at))))]);
+  }
+
+  function profileView() {
+    const msg = h("p", { class: "err", role: "status" });
+    const phone = h("input", { type: "tel", value: me.phone || "", placeholder: "+237 6XX XX XX XX" }), wa = h("input", { type: "checkbox" }); wa.checked = !!me.whatsapp_optin;
+    const profile = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); msg.textContent = ""; try { await api("/api/auth?a=profile", "POST", { phone: phone.value, whatsapp: wa.checked }); me.phone = phone.value; me.whatsapp_optin = wa.checked; msg.className = "ok"; msg.textContent = "Profil enregistré."; } catch (x) { msg.className = "err"; msg.textContent = x.message; } } },
+      h("h2", {}, "Mon profil"), h("p", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur")),
+      field("Numéro WhatsApp (avec indicatif)", phone), h("br"), h("label", { class: "chk" }, wa, "Recevoir mes notifications sur WhatsApp quand je ne suis pas connecté"), msg, h("button", { type: "submit" }, "Enregistrer"));
+    const pmsg = h("p", { class: "err" }), cur = h("input", { type: "password", autocomplete: "current-password" }), nxt = h("input", { type: "password", autocomplete: "new-password", minlength: 12 });
+    const pw = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); pmsg.textContent = ""; try { await api("/api/auth?a=password", "POST", { current: cur.value, next: nxt.value }); pmsg.className = "ok"; pmsg.textContent = "Mot de passe modifié."; cur.value = nxt.value = ""; } catch (x) { pmsg.className = "err"; pmsg.textContent = x.message; } } },
+      h("h2", {}, "Changer le mot de passe"), h("div", { class: "grid" }, field("Mot de passe actuel", cur), field("Nouveau (12 caractères min.)", nxt)), pmsg, h("button", { type: "submit" }, "Modifier"));
+    const tbox = h("div", { class: "card" }, h("h2", {}, "Double authentification (2FA)"));
+    const tmsg = h("p", { class: "err" });
+    const draw = () => {
+      tbox.replaceChildren(h("h2", {}, "Double authentification (2FA)"));
+      if (me.totp_enabled) {
+        const pw2 = h("input", { type: "password" }), c2 = h("input", { inputmode: "numeric", maxlength: 8 });
+        tbox.append(h("p", { class: "ok" }, "✓ Activée : un code est demandé à chaque connexion."), h("div", { class: "grid" }, field("Mot de passe", pw2), field("Code actuel", c2)), tmsg,
+          h("button", { class: "danger", onclick: async () => { tmsg.textContent = ""; try { await api("/api/auth?a=totp_disable", "POST", { password: pw2.value, code: c2.value }); me.totp_enabled = false; draw(); } catch (x) { tmsg.textContent = x.message; } } }, "Désactiver"));
+      } else {
+        tbox.append(h("p", { class: "muted" }, "Utilisez une application comme Google Authenticator, Microsoft Authenticator ou Authy."), tmsg,
+          h("button", { onclick: async () => { tmsg.textContent = ""; try {
+            const r = await api("/api/auth?a=totp_setup", "POST", {}); const c3 = h("input", { inputmode: "numeric", maxlength: 8, placeholder: "Code à 6 chiffres" });
+            tbox.replaceChildren(h("h2", {}, "Double authentification (2FA)"), h("p", {}, "1. Dans votre application, choisissez « Saisir une clé de configuration » et entrez cette clé :"), h("p", {}, h("code", { style: "font-size:1.1rem;word-break:break-all" }, r.secret)),
+              h("p", { class: "muted" }, "(Sur téléphone, vous pouvez aussi ouvrir ce lien : "), h("a", { href: r.uri }, "ajouter automatiquement"), h("span", { class: "muted" }, ")"),
+              h("p", {}, "2. Saisissez le code affiché pour confirmer :"), field("Code", c3), tmsg,
+              h("button", { onclick: async () => { tmsg.textContent = ""; try { await api("/api/auth?a=totp_enable", "POST", { code: c3.value }); me.totp_enabled = true; draw(); } catch (x) { tmsg.textContent = x.message; } } }, "Activer la 2FA"));
+          } catch (x) { tmsg.textContent = x.message; } } }, "Activer la double authentification"));
+      }
+    };
+    draw();
+    return h("div", {}, profile, pw, tbox);
+  }
+
+  const NAV = (sup) => [
+    ["Pilotage", [["dashboard", "Tableau de bord"]]],
+    ["Gestion", [["annonces", "Annonces"], ["orders", "Commandes", "pendingOrders"], ["clients", "Clients", null, 1]]],
+    ["Communication", [["chat", "Messagerie", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Messages reçus"], ["suggestions", "Suggestions", "suggestions"]]],
+    ["Contrôle", [["activity", "Activité des clients", null, 1], ["admins", "Administrateurs", null, 1], ["audit", "Journal de sécurité", null, 1], ["profile", "Mon profil"]]]
+  ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
+
+  async function render() {
+    stopPoll();
+    if (!me) { app.replaceChildren(loginView()); return; }
+    try { counts = await api("/api/console?a=counts"); } catch (e) {}
+    const sup = me.role === "super_admin";
+    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), "Maison Admin"));
+    for (const [g, items] of NAV(sup)) {
+      nav.append(h("div", { class: "grp" }, g));
+      for (const [id, label, cnt] of items) {
+        const n = cnt ? counts[cnt] : 0;
+        nav.append(h("button", { class: "nav" + (tab === id || (tab === "form" && id === "annonces") ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""));
+      }
+    }
+    nav.append(h("div", { class: "who" }, h("b", {}, me.name || me.email), sup ? "Super administrateur" : "Administrateur"));
+    const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
+      : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
+      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "annonces" ? listView() : dashboardView();
+    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", clients: "Clients", chat: "Messagerie", notifs: "Notifications", messages: "Messages reçus", suggestions: "Suggestions", activity: "Activité des clients", admins: "Administrateurs", audit: "Journal de sécurité", profile: "Mon profil" };
+    app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },
+      h("header", { class: "top" }, h("h1", {}, titles[tab] || "Tableau de bord"), h("div", { class: "row" },
+        h("a", { class: "btn ghost", href: "/" }, "Voir le site"), h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
+      h("div", { class: "content" }, body))));
+  }
+
+  api("/api/auth?a=me").then(async (r) => { me = r.user; tab = "dashboard"; await load(); render(); }).catch(() => render());
 })();
