@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer , wrap } from "./_lib.js";
+import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer } from "./_lib.js";
 
 const FLW = "https://api.flutterwave.com/v3";
 const key = () => process.env.FLW_SECRET_KEY;
@@ -31,7 +31,7 @@ async function settle(txRef) {
   return "pending";
 }
 
-async function handler(req, res) {
+export default async function handler(req, res) {
   const a = req.query.a;
 
   if (a === "config") return send(res, 200, { online: !!key(), cash: true });
@@ -106,5 +106,3 @@ async function handler(req, res) {
   }
   send(res, 404, { error: "Inconnu" });
 }
-
-export default wrap("pay", handler);

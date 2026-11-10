@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, audit , wrap } from "./_lib.js";
+import { sql, send, requireUser, audit } from "./_lib.js";
 
 const MAX_BYTES = 1_500_000;
 
@@ -10,7 +10,7 @@ function sniff(buf) {
   return null;
 }
 
-async function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method === "GET") {
     const id = String(req.query.id || "");
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
@@ -34,5 +34,3 @@ async function handler(req, res) {
   await audit(u.id, "image.upload", id);
   send(res, 201, { url: `/api/image?id=${id}` });
 }
-
-export default wrap("image", handler);

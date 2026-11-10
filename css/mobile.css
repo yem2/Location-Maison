@@ -1,0 +1,80 @@
+/* ============================================================
+   ADAPTATION À TOUS LES APPAREILS (téléphone, tablette, PC)
+   Chargé en dernier : corrige les débordements et passe le menu
+   en "hamburger" dès la tablette.
+   ============================================================ */
+
+/* --- Socle : rien ne doit jamais dépasser de l'écran --------- */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { overflow-x: clip; }
+img, video, iframe, canvas, svg { max-width: 100%; }
+img, video { height: auto; }
+input, select, textarea, button { max-width: 100%; }
+input[type="range"] { width: 100%; }
+.comparison-table, table { max-width: 100%; }
+.compare-content, .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* --- Tablette et plus petit (≤ 1024 px) : menu hamburger ----- */
+@media (max-width: 1024px) {
+  .site-header { gap: 8px; padding-left: 5%; padding-right: 5%; }
+  .menu-toggle {
+    display: grid; order: 3; flex: 0 0 auto;
+    width: 40px; height: 40px; align-content: center; justify-items: center; gap: 6px;
+    border: 1px solid var(--line); border-radius: 6px; background: transparent;
+  }
+  .menu-toggle span { width: 16px; height: 1.5px; background: var(--ink); border-radius: 2px; transition: transform .25s ease, opacity .25s ease; }
+  .menu-toggle[aria-expanded="true"] span:first-child { transform: translateY(7.5px) rotate(45deg); }
+  .menu-toggle[aria-expanded="true"] span:last-child { transform: translateY(-7.5px) rotate(-45deg); }
+  .main-nav {
+    position: absolute; top: 100%; right: 0; left: 0; display: none; gap: 0; margin: 0;
+    padding: 10px 5% 17px; border-bottom: 1px solid var(--line);
+    background: rgba(244,248,246,.98); backdrop-filter: blur(14px);
+    max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px); overflow-y: auto;
+  }
+  .main-nav.is-open { display: grid; }
+  .main-nav a { padding: 14px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+  .main-nav a:last-child { border-bottom: 0; }
+  .header-cta { margin-left: auto; margin-right: 8px; white-space: nowrap; }
+  .account-btn { margin-right: 0; }
+  .hero { grid-template-columns: 1fr; }
+  .hero-visual { width: 100%; margin-right: 0; }
+  .hero-note { right: 0; }
+}
+
+/* --- Téléphone (≤ 620 px) ------------------------------------ */
+@media (max-width: 620px) {
+  .site-header { padding-left: 4%; padding-right: 4%; }
+  .brand { font-size: 18px; min-width: 0; }
+  .header-cta { padding: 9px 12px; font-size: 12px; margin-right: 6px; }
+  .header-cta span { display: none; }
+  .account-btn { padding: 8px 12px; font-size: 12.5px; }
+  .hero-note { right: 0; }
+  .sort-control select { max-width: 100%; }
+  .listing-controls { flex-wrap: wrap; gap: 10px; }
+  .dialog-stats { grid-template-columns: repeat(2, 1fr); }
+  .contact-dialog, .acc-dialog, .property-dialog { width: calc(100vw - 24px); max-width: 580px; }
+}
+
+/* --- Petits téléphones (≤ 420 px) : le bouton Contact est déjà
+       dans le menu, on libère la place pour "Se connecter" ---- */
+@media (max-width: 420px) {
+  .header-cta { display: none; }
+  .brand-mark { width: 30px; height: 30px; }
+  h1 { font-size: clamp(36px, 11vw, 50px); }
+  .section-heading h2, .about-copy h2 { font-size: 33px; }
+}
+
+/* --- Écrans tactiles : zones de clic confortables (≥ 44 px) -- */
+@media (pointer: coarse) {
+  .main-nav a, .filter-tab, .search-button, .outline-button,
+  .header-cta, .account-btn, .menu-toggle { min-height: 44px; }
+  .menu-toggle { min-width: 44px; }
+}
+
+/* --- Très grands écrans : contenu centré, pas étiré ----------- */
+@media (min-width: 1800px) {
+  body { font-size: 17px; }
+}
+
+/* Curseurs du simulateur : la marge par défaut les faisait déborder de 3 px */
+input[type="range"] { margin: 0; }

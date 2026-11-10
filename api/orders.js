@@ -1,6 +1,6 @@
-import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str , wrap } from "./_lib.js";
+import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str } from "./_lib.js";
 
-async function handler(req, res) {
+export default async function handler(req, res) {
   // ----- Espace administrateur -----
   if (req.query.admin === "1") {
     const u = await requireUser(req, res);
@@ -74,5 +74,3 @@ async function handler(req, res) {
   }
   send(res, 405, { error: "Méthode refusée" });
 }
-
-export default wrap("orders", handler);
