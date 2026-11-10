@@ -1,8 +1,9 @@
-import { sql, send, requireUser, sameOrigin, audit, str, emailOk } from "./_lib.js";
+import { sql, send, throttle, requireUser, sameOrigin, audit, str, emailOk } from "./_lib.js";
 
 export default async function handler(req, res) {
   if (req.method === "POST") {
     if (!sameOrigin(req)) return send(res, 403, { error: "Origine refusée" });
+    if (!(await throttle(req, res, "msg", 6, 600))) return;
     const b = req.body || {};
     if (b.website) return send(res, 200, { ok: true }); // champ piège anti-robots
     const m = { name: str(b.name, 100), email: str(b.email, 254).toLowerCase(), phone: str(b.phone, 30), property: str(b.property, 80) || null, message: str(b.message, 3000) };

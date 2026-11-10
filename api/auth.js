@@ -1,4 +1,4 @@
-import { sql, send, verifyPassword, createSession, destroySession, currentUser, sameOrigin, audit, str } from "./_lib.js";
+import { sql, send, throttle, verifyPassword, createSession, destroySession, currentUser, sameOrigin, audit, str } from "./_lib.js";
 
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
@@ -12,6 +12,7 @@ export default async function handler(req, res) {
   if (a === "logout") { await destroySession(req, res); return send(res, 200, { ok: true }); }
   if (a !== "login") return send(res, 404, { error: "Inconnu" });
 
+  if (!(await throttle(req, res, "alogin", 10, 600))) return;
   const email = str(req.body?.email, 254).toLowerCase();
   const password = typeof req.body?.password === "string" ? req.body.password.slice(0, 200) : "";
   const [user] = await sql`SELECT * FROM users WHERE email = ${email}`;

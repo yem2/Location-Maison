@@ -72,3 +72,52 @@ export const audit = (userId, action, detail = "") =>
 
 export const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 export const emailOk = (e) => /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(e);
+
+// ---------- Comptes clients (visiteurs inscrits) ----------
+export async function createCustomerSession(res, customerId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  await sql`INSERT INTO customer_sessions (token_hash, customer_id, expires_at) VALUES (${sha(token)}, ${customerId}, now() + interval '30 days')`;
+  await sql`DELETE FROM customer_sessions WHERE expires_at < now()`;
+  res.setHeader("Set-Cookie", `csid=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`);
+}
+
+export async function destroyCustomerSession(req, res) {
+  const t = cookie(req, "csid");
+  if (t) await sql`DELETE FROM customer_sessions WHERE token_hash = ${sha(t)}`;
+  res.setHeader("Set-Cookie", "csid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0");
+}
+
+export async function currentCustomer(req) {
+  const t = cookie(req, "csid");
+  if (!t) return null;
+  const rows = await sql`SELECT c.id, c.name, c.email, c.phone FROM customer_sessions s JOIN customers c ON c.id = s.customer_id
+    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND c.active`;
+  return rows[0] || null;
+}
+
+export async function requireCustomer(req, res) {
+  if (!sameOrigin(req)) { send(res, 403, { error: "Origine refusée" }); return null; }
+  const c = await currentCustomer(req);
+  if (!c) { send(res, 401, { error: "Connectez-vous ou créez un compte pour continuer." }); return null; }
+  return c;
+}
+
+export const logActivity = (customerId, action, propertyId = null, detail = "") =>
+  sql`INSERT INTO activity (customer_id, action, property_id, detail) VALUES (${customerId}, ${action}, ${propertyId}, ${String(detail).slice(0, 300)})`;
+
+export const notifyAdmins = (type, title, detail = "", customerId = null) =>
+  sql`INSERT INTO admin_notifications (type, title, detail, customer_id) VALUES (${type}, ${String(title).slice(0, 200)}, ${String(detail).slice(0, 400)}, ${customerId})`;
+
+export const notifyCustomer = (customerId, text) =>
+  sql`INSERT INTO customer_notifications (customer_id, text) VALUES (${customerId}, ${String(text).slice(0, 400)})`;
+
+// ---------- Limitation de débit (anti-abus), par adresse IP ----------
+export async function throttle(req, res, key, max, windowSec) {
+  const ip = String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "?").trim().slice(0, 64);
+  const k = `${key}:${ip}`;
+  await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`;
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})`;
+  if (n >= max) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
+  await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
+  return true;
+}

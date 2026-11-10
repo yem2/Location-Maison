@@ -37,6 +37,10 @@
 
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 
+    const AV = { available: "Disponible", reserved: "Réservé", unavailable: "Indisponible" };
+    const avOf = (p) => (AV[p.availability] ? p.availability : "available");
+    const availPill = (p) => `<span class="avail avail-${avOf(p)}">${AV[avOf(p)]}</span>`;
+
     function normalize(value) {
       return value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr");
     }
@@ -103,6 +107,7 @@
           <div class="property-image">
             <img src="${esc(property.image)}" alt="${esc(property.alt)}" width="1400" height="933" loading="lazy" decoding="async">
             <span class="property-badge">${esc(property.label)}</span>
+            ${availPill(property)}
             <button class="favorite-button" type="button" data-favorite="${esc(property.id)}"
               aria-label="${favorites.has(property.id) ? 'Retirer des' : 'Ajouter aux'} favoris : ${esc(property.title)}"
               aria-pressed="${favorites.has(property.id)}">♡</button>
@@ -166,7 +171,7 @@
       propertyDetail.innerHTML = `
         <img class="dialog-image" src="${esc(property.image)}" alt="${esc(property.alt)}" width="1400" height="933" decoding="async">
         <div class="dialog-content">
-          <p class="property-location">${esc(property.location)} · ${esc(property.kindLabel)}</p>
+          <p class="property-location">${esc(property.location)} · ${esc(property.kindLabel)} · ${availPill(property)}</p>
           <h2 id="dialog-title">${esc(property.title)}</h2>
           <p class="dialog-price">${formatPrice(property)}</p>
           <div class="dialog-stats">
@@ -182,10 +187,12 @@
             <button class="outline-button share-property" type="button" data-share="${esc(property.id)}">Partager ce bien <span aria-hidden="true">↗</span></button>
             <p class="share-feedback" role="status" hidden></p>
           </div>
+          <button class="search-button dialog-order" type="button" data-order="${esc(property.id)}"${avOf(property) === "available" ? "" : " disabled"}>${avOf(property) === "available" ? "Réserver ce bien" : "Bien indisponible"}</button>
           <button class="search-button dialog-contact" type="button" data-inquire="${esc(property.id)}">Demander des informations <span aria-hidden="true">↗</span></button>
         </div>
       `;
       propertyDialog.showModal();
+      if (app.trackView) app.trackView(property.id);
     }
 
     tabs.forEach((tab) => tab.addEventListener("click", () => setOperation(tab.dataset.filter)));
@@ -264,6 +271,12 @@
       const featureButton = event.target.closest("[data-feature]");
       if (featureButton) {
         filterByFeature(featureButton.dataset.feature);
+        return;
+      }
+      const orderButton = event.target.closest("[data-order]");
+      if (orderButton) {
+        const property = properties.find((item) => item.id === orderButton.dataset.order);
+        if (property && app.requestOrder) app.requestOrder(property);
         return;
       }
       const shareButton = event.target.closest("[data-share]");

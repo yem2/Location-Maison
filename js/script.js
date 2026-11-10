@@ -9,6 +9,7 @@
    ============================================================ */
 (async function start() {
   window.Maison.initContact();
+  if (window.Maison.initAccount) window.Maison.initAccount();
   if (document.querySelector("#property-grid") && window.Maison.loadRemote) await window.Maison.loadRemote();
   window.Maison.initListings();
   window.Maison.initNavigation();
