@@ -20,6 +20,12 @@ input[type="range"] { width: 100%; }
 .comparison-table, table { max-width: 100%; }
 .compare-content, .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+/* --- Grand écran un peu étroit (≥ 1181 px) : l'en-tête tient sur une ligne --- */
+@media (min-width: 1181px) {
+  .main-nav { gap: clamp(18px, 2vw, 36px); margin-left: clamp(16px, 3vw, 60px); }
+  .header-cta { padding-left: clamp(14px, 1.6vw, 22px); padding-right: clamp(14px, 1.6vw, 22px); }
+}
+
 /* --- Tablette, petit PC (≤ 1180 px) : menu hamburger ---------- */
 @media (max-width: 1180px) {
   .site-header { gap: 8px; padding-left: 5%; padding-right: 5%; }

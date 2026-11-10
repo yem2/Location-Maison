@@ -1,5 +1,13 @@
 import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk , wrap } from "./_lib.js";
 
+// Colonnes du profil (ville, présentation, photo) : créées automatiquement si la migration n'a pas été lancée.
+let profileCols;
+function ensureProfileCols() {
+  profileCols ??= sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT ''`.then(() => true, () => false);
+  return profileCols;
+}
+const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
 async function handler(req, res) {
@@ -12,7 +20,11 @@ async function handler(req, res) {
     const [{ m }] = await sql`SELECT count(*)::int AS m FROM chat_messages cm JOIN chat_threads t ON t.id = cm.thread_id
       WHERE (t.customer_a = ${c.id} OR t.customer_b = ${c.id}) AND NOT (cm.sender_type = 'customer' AND cm.sender_customer_id = ${c.id})
       AND cm.id > CASE WHEN t.customer_a = ${c.id} THEN t.a_read_id ELSE t.b_read_id END`;
-    return send(res, 200, { customer: c, unread: n, chatUnread: m });
+    let customer = c;
+    if (req.query.full === "1" && (await ensureProfileCols())) {
+      try { const [x] = await sql`SELECT city, bio, avatar FROM customers WHERE id = ${c.id}`; customer = { ...c, ...x }; } catch (e) { /* colonnes indisponibles */ }
+    }
+    return send(res, 200, { customer, unread: n, chatUnread: m });
   }
 
   if (a === "notifications") {
@@ -44,15 +56,35 @@ async function handler(req, res) {
   if (a === "profile") {
     const c = await requireCustomer(req, res);
     if (!c) return;
-    const phone = str(b.phone, 30), opt = b.whatsapp === true;
+    const name = "name" in b ? str(b.name, 100) : c.name;
+    const phone = "phone" in b ? str(b.phone, 30) : c.phone || "";
+    const opt = typeof b.whatsapp === "boolean" ? b.whatsapp : !!c.whatsapp_optin;
+    if (!name) return send(res, 400, { error: "Le nom est obligatoire." });
     if (opt && !normalizePhone(phone)) return send(res, 400, { error: "Indiquez un numéro WhatsApp valide avec l’indicatif du pays." });
-    await sql`UPDATE customers SET phone = ${phone}, whatsapp_optin = ${opt} WHERE id = ${c.id}`;
-    return send(res, 200, { ok: true });
+    const out = { name, phone, whatsapp_optin: opt };
+    if ("city" in b || "bio" in b || "avatar" in b) {
+      const extra = {};
+      if ("city" in b) extra.city = str(b.city, 80);
+      if ("bio" in b) extra.bio = str(b.bio, 500);
+      if ("avatar" in b) {
+        const av = typeof b.avatar === "string" ? b.avatar : "";
+        if (av && (av.length > 120000 || !AVATAR_RE.test(av))) return send(res, 400, { error: "Photo invalide ou trop lourde (image JPG, PNG ou WebP)." });
+        extra.avatar = av;
+      }
+      if (!(await ensureProfileCols())) return send(res, 500, { error: "Le profil n’est pas encore activé sur le serveur (migration-profil.sql à exécuter dans Neon)." });
+      const cur = (await sql`SELECT city, bio, avatar FROM customers WHERE id = ${c.id}`)[0] || {};
+      const m = { city: cur.city || "", bio: cur.bio || "", avatar: cur.avatar || "", ...extra };
+      await sql`UPDATE customers SET name = ${name}, phone = ${phone}, whatsapp_optin = ${opt}, city = ${m.city}, bio = ${m.bio}, avatar = ${m.avatar} WHERE id = ${c.id}`;
+      Object.assign(out, m);
+    } else {
+      await sql`UPDATE customers SET name = ${name}, phone = ${phone}, whatsapp_optin = ${opt} WHERE id = ${c.id}`;
+    }
+    return send(res, 200, { ok: true, customer: out });
   }
   if (a === "password") {
     const c = await requireCustomer(req, res);
     if (!c) return;
-    const next = typeof b.next === "string" ? b.next : "";
+    const next = typeof b.next === "string" ? b.next : typeof b.password === "string" ? b.password : "";
     const [row] = await sql`SELECT password_hash FROM customers WHERE id = ${c.id}`;
     if (!verifyPassword(String(b.current || ""), row.password_hash)) return send(res, 400, { error: "Mot de passe actuel incorrect." });
     if (next.length < 8 || next.length > 200) return send(res, 400, { error: "Le nouveau mot de passe doit contenir au moins 8 caractères." });

@@ -42,7 +42,7 @@ async function handler(req, res) {
     let result = "echec";
     if (req.query.status === "cancelled") result = "annule";
     else if (ref && key()) result = (await settle(ref)) === "paid" ? "ok" : "attente";
-    res.setHeader("Location", `/?paiement=${result}`);
+    res.setHeader("Location", `/compte?paiement=${result}`);
     return res.status(302).end();
   }
 

@@ -23,6 +23,10 @@
     {
       "source": "/admin",
       "destination": "/html/admin.html"
+    },
+    {
+      "source": "/compte",
+      "destination": "/html/compte.html"
     }
   ],
   "headers": [

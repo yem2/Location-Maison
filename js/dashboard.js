@@ -49,6 +49,29 @@
     toastEl.textContent = msg; toastEl.hidden = false;
     clearTimeout(toast.t); toast.t = setTimeout(() => (toastEl.hidden = true), 5000);
   }
+  function avatarEl(u, size) {
+    const initials = (u.name || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("");
+    return h("div", { class: "avatar" + (size ? " " + size : ""), "aria-hidden": "true" }, u.avatar ? h("img", { src: u.avatar, alt: "" }) : initials);
+  }
+  function toAvatar(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !/^image\//.test(file.type)) return reject(new Error("Choisissez une image (JPG, PNG ou WebP)."));
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error("Lecture de l’image impossible."));
+      fr.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Image illisible."));
+        img.onload = () => {
+          const s = 256, c = document.createElement("canvas"), side = Math.min(img.width, img.height);
+          c.width = c.height = s;
+          c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, s, s);
+          resolve(c.toDataURL("image/jpeg", 0.82));
+        };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
   const field = (label, input) => h("label", { class: "field" }, h("span", {}, label), input);
   const empty = (text, btn) => h("div", { class: "empty" }, h("span", {}, text), btn || "");
   const readFavs = () => { try { const a = JSON.parse(localStorage.getItem("maison-favorites") || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
@@ -96,7 +119,7 @@
     app.className = "dash";
     app.replaceChildren(
       h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
-        h("div", { class: "side-user" }, h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email)),
+        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email))),
           h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
       h("div", { class: "main" },
         h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
@@ -104,6 +127,15 @@
     content.append(VIEWS[view]());
   }
 
+  function completeness() {
+    const todo = [["photo", me.avatar], ["téléphone", me.phone], ["ville", me.city], ["présentation", me.bio]].filter((x) => !x[1]).map((x) => x[0]);
+    if (!todo.length) return "";
+    const pct = Math.round(((6 - todo.length) / 6) * 100);
+    return h("div", { class: "card complete" }, h("div", { class: "complete-top" }, h("h2", {}, "Complétez votre profil"), h("strong", {}, pct + " %")),
+      h("div", { class: "progress", role: "progressbar", "aria-valuenow": String(pct), "aria-valuemin": "0", "aria-valuemax": "100" }, h("i", { style: "width:" + pct + "%" })),
+      h("p", { class: "muted" }, "Il manque : " + todo.join(", ") + ". Un profil complet facilite le traitement de vos demandes."),
+      h("button", { class: "btn sm", type: "button", onclick: () => go("profil") }, "Compléter mon profil"));
+  }
   function overview() {
     const first = me.name.split(" ")[0];
     const pending = orders.filter((o) => o.status === "pending").length, accepted = orders.filter((o) => o.status === "confirmed").length;
@@ -112,8 +144,9 @@
     const dueTxt = Object.entries(due).map(([c, a]) => money(a, c)).join(" + ");
     const kpi = (label, val, sub, small) => h("div", { class: "card kpi" }, h("span", {}, label), h("strong", { class: small ? "sm" : "" }, val), h("em", {}, sub));
     return h("div", { class: "content-inner", style: "display:grid;gap:20px;min-width:0" },
-      h("div", { class: "card hero" }, h("div", {}, h("h2", {}, "Bonjour " + first + " 👋"), h("p", {}, "Suivez vos demandes, vos paiements et vos échanges avec notre équipe.")),
+      h("div", { class: "card hero" }, h("div", {}, h("h2", {}, "Bonjour " + first), h("p", {}, "Suivez vos demandes, vos paiements et vos échanges avec notre équipe.")),
         h("div", { class: "btns" }, h("a", { class: "btn light", href: "/acheter" }, "Parcourir les biens"), h("button", { class: "btn lightghost", type: "button", onclick: () => go("messages") }, "Contacter le support"))),
+      completeness(),
       h("div", { class: "kpis" },
         kpi("Demandes en attente", String(pending), pending ? "En cours d’examen" : "Aucune en attente"),
         kpi("Demandes acceptées", String(accepted), accepted ? "Bravo !" : "Pas encore"),
@@ -266,21 +299,42 @@
 
   // ---------- Profil ----------
   function profile() {
-    const name = h("input", { type: "text", value: me.name, maxlength: 100, autocomplete: "name", required: true }), phone = h("input", { type: "tel", value: me.phone || "", maxlength: 30, autocomplete: "tel" });
-    const perr = h("p", { class: "err", role: "alert" }), pbtn = h("button", { class: "btn", type: "submit" }, "Enregistrer");
+    const name = h("input", { type: "text", value: me.name, maxlength: 100, autocomplete: "name", required: true });
+    const phone = h("input", { type: "tel", value: me.phone || "", maxlength: 30, autocomplete: "tel", placeholder: "+237 6XX XX XX XX" });
+    const city = h("input", { type: "text", value: me.city || "", maxlength: 80, autocomplete: "address-level2", placeholder: "Ex. Douala" });
+    const bio = h("textarea", { rows: 4, maxlength: 500, placeholder: "Quelques mots sur vous (facultatif)" }); bio.value = me.bio || "";
+    const wa = h("input", { type: "checkbox" }); wa.checked = !!me.whatsapp_optin;
+    let avatar = me.avatar || "";
+    const slot = h("div", { class: "avatar-slot" }, avatarEl(me, "lg"));
+    const repaint = () => slot.replaceChildren(avatarEl({ name: name.value || me.name, avatar }, "lg"));
+    const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async (e) => {
+      perr.textContent = "";
+      try { avatar = await toAvatar(e.target.files[0]); repaint(); } catch (x) { perr.textContent = x.message; } finally { e.target.value = ""; }
+    } });
+    const perr = h("p", { class: "err", role: "alert" }), pbtn = h("button", { class: "btn", type: "submit" }, "Enregistrer le profil");
     const cur = h("input", { type: "password", autocomplete: "current-password", required: true }), n1 = h("input", { type: "password", autocomplete: "new-password", minlength: 8, required: true }), n2 = h("input", { type: "password", autocomplete: "new-password", minlength: 8, required: true });
     const serr = h("p", { class: "err", role: "alert" }), sbtn = h("button", { class: "btn", type: "submit" }, "Changer le mot de passe");
     return h("div", { style: "display:grid;gap:20px;min-width:0" },
-      h("div", { class: "card" }, h("h2", {}, "Informations personnelles"), h("form", { class: "form", onsubmit: async (e) => {
+      h("div", { class: "card" }, h("h2", {}, "Mon profil"), h("form", { class: "form", onsubmit: async (e) => {
         e.preventDefault(); perr.textContent = ""; pbtn.disabled = true;
-        try { const r = await api("/api/customer?a=profile", "POST", { name: name.value, phone: phone.value }); me = Object.assign(me, r.customer); toast("Profil mis à jour."); render(); }
-        catch (x) { perr.textContent = x.message; pbtn.disabled = false; }
-      } }, field("Nom complet", name), field("E-mail (non modifiable)", h("input", { type: "email", value: me.email, readonly: true })), field("Téléphone", phone), perr, pbtn)),
+        try {
+          const r = await api("/api/customer?a=profile", "POST", { name: name.value, phone: phone.value, city: city.value, bio: bio.value, avatar, whatsapp: wa.checked });
+          me = Object.assign(me, r.customer); toast("Profil enregistré."); render();
+        } catch (x) { perr.textContent = x.message; pbtn.disabled = false; }
+      } },
+        h("div", { class: "profile-head" }, slot, h("div", { class: "profile-actions" },
+          h("button", { class: "btn ghost sm", type: "button", onclick: () => file.click() }, avatar ? "Changer la photo" : "Ajouter une photo"),
+          avatar ? h("button", { class: "btn ghost sm", type: "button", onclick: () => { avatar = ""; repaint(); } }, "Retirer") : "", file,
+          h("small", { class: "muted" }, "Image carrée recommandée, recadrée automatiquement."))),
+        field("Nom complet", name), field("E-mail (non modifiable)", h("input", { type: "email", value: me.email, readonly: true })),
+        field("Téléphone / WhatsApp (avec indicatif)", phone), field("Ville", city), field("À propos de moi", bio),
+        h("label", { class: "check" }, wa, h("span", {}, "Me prévenir sur WhatsApp quand je reçois un message ou une réponse et que je ne suis pas connecté.")),
+        perr, pbtn)),
       h("div", { class: "card" }, h("h2", {}, "Mot de passe"), h("form", { class: "form", onsubmit: async (e) => {
         e.preventDefault(); serr.textContent = "";
         if (n1.value !== n2.value) { serr.textContent = "Les deux nouveaux mots de passe ne correspondent pas."; return; }
         sbtn.disabled = true;
-        try { await api("/api/customer?a=password", "POST", { current: cur.value, password: n1.value }); cur.value = n1.value = n2.value = ""; toast("Mot de passe modifié."); }
+        try { await api("/api/customer?a=password", "POST", { current: cur.value, next: n1.value }); cur.value = n1.value = n2.value = ""; toast("Mot de passe modifié."); }
         catch (x) { serr.textContent = x.message; } finally { sbtn.disabled = false; }
       } }, field("Mot de passe actuel", cur), field("Nouveau mot de passe (8 caractères minimum)", n1), field("Confirmer le nouveau mot de passe", n2), serr, sbtn)),
       h("div", { class: "card" }, h("h2", {}, "Session"), h("p", { class: "muted" }, "Vous êtes connecté en tant que " + me.email + "."), h("button", { class: "btn danger", type: "button", onclick: logout }, "Se déconnecter")));
@@ -323,5 +377,5 @@
   }
 
   window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (me && VIEWS[id] && id !== view) { view = id; render(); } });
-  api("/api/customer?a=me").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
+  api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
 })();

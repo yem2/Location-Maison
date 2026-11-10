@@ -24,7 +24,7 @@
     clearTimeout(toast.t); toast.t = setTimeout(() => (toastEl.hidden = true), 5000);
   }
   function updateBtn() {
-    btn.textContent = customer ? "👤 " + customer.name.split(" ")[0] + (unread ? " (" + unread + ")" : "") : "Se connecter";
+    btn.textContent = customer ? "Mon espace" + (unread ? " (" + unread + ")" : "") : "Se connecter";
   }
   async function refresh() {
     try { const r = await api("/api/customer?a=me"); customer = r.customer; unread = r.unread + (r.chatUnread || 0); }
@@ -74,7 +74,7 @@
         const r = await api("/api/customer?a=" + (signup ? "signup" : "login"), "POST", body);
         customer = r.customer; await refresh();
         toast(signup ? "Compte créé, bienvenue !" : "Connexion réussie.");
-        render(pendingProperty ? "order" : "account");
+        if (pendingProperty) render("order"); else location.href = "/compte";
       } catch (x) {
         err.textContent = x.message;
         if (x.data && x.data.exists) { render("login", "Un compte existe déjà avec cet e-mail : connectez-vous."); }
@@ -191,12 +191,12 @@
   };
   app.initAccount = function () {
     if (dlg) return;
-    const css = h("link", { rel: "stylesheet", href: "css/account.css" }); document.head.append(css);
+    const css = h("link", { rel: "stylesheet", href: "/css/account.css" }); document.head.append(css);
     box = h("div", { class: "acc-box" });
     dlg = h("dialog", { class: "acc-dialog", "aria-label": "Mon compte" }, box);
     dlg.addEventListener("click", (e) => { if (e.target === dlg) close(); });
     toastEl = h("div", { class: "acc-toast", role: "status", hidden: true });
-    btn = h("button", { type: "button", class: "account-btn", onclick: () => open(customer ? "account" : "login") }, "Se connecter");
+    btn = h("button", { type: "button", class: "account-btn", onclick: () => { if (customer) location.href = "/compte"; else open("login"); } }, "Se connecter");
     const cta = document.querySelector(".header-cta");
     if (cta) cta.before(btn); else (document.querySelector(".site-header") || document.body).append(btn);
     document.body.append(dlg, toastEl);
