@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit , wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -44,14 +44,56 @@ async function handler(req, res) {
 
   if (a === "customers") {
     if (req.method === "PATCH") {
-      const id = Number(req.query.id) || 0;
-      const active = req.body?.active === true;
-      await sql`UPDATE customers SET active = ${active} WHERE id = ${id}`;
-      if (!active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
-      await audit(me.id, active ? "customer.enable" : "customer.disable", String(id));
+      const id = Number(req.query.id) || 0, b = req.body || {};
+      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
+      if (!c) return send(res, 404, { error: "Client introuvable." });
+      if (typeof b.active === "boolean") {
+        await sql`UPDATE customers SET active = ${b.active} WHERE id = ${id}`;
+        if (!b.active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
+        await audit(me.id, b.active ? "customer.enable" : "customer.disable", String(id));
+      }
+      if (b.disconnect === true) {
+        await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
+        await audit(me.id, "customer.disconnect", c.email);
+      }
+      if (typeof b.password === "string") {
+        if (b.password.length < 8 || b.password.length > 200) return send(res, 400, { error: "Mot de passe d’au moins 8 caractères." });
+        await sql`UPDATE customers SET password_hash = ${hashPassword(b.password)}, failed_logins = 0, locked_until = NULL WHERE id = ${id}`;
+        await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
+        await audit(me.id, "customer.password_reset", c.email);
+      }
+      if ("name" in b || "email" in b || "phone" in b) {
+        const name = "name" in b ? str(b.name, 100) : null, email = "email" in b ? str(b.email, 254).toLowerCase() : null, phone = "phone" in b ? str(b.phone, 30) : null;
+        if (name !== null && !name) return send(res, 400, { error: "Le nom est obligatoire." });
+        if (email !== null && !emailOk(email)) return send(res, 400, { error: "E-mail invalide." });
+        if (email !== null && (await sql`SELECT 1 FROM customers WHERE email = ${email} AND id <> ${id}`).length) return send(res, 409, { error: "Cet e-mail est déjà utilisé par un autre compte." });
+        await sql`UPDATE customers SET name = COALESCE(${name}, name), email = COALESCE(${email}, email), phone = COALESCE(${phone}, phone) WHERE id = ${id}`;
+        await audit(me.id, "customer.update", c.email);
+      }
       return send(res, 200, { ok: true });
     }
-    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login,
+    if (req.method === "DELETE") {
+      const id = Number(req.query.id) || 0;
+      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
+      if (!c) return send(res, 404, { error: "Client introuvable." });
+      const [p] = await sql`SELECT count(*)::int AS n FROM orders WHERE customer_id = ${id} AND payment_status = 'paid'`;
+      if (p.n) return send(res, 409, { error: "Ce client a des acomptes payés : désactivez son compte plutôt que de le supprimer (la comptabilité est conservée)." });
+      try {
+        await sql.transaction([
+          sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`,
+          sql`DELETE FROM customer_notifications WHERE customer_id = ${id}`,
+          sql`DELETE FROM activity WHERE customer_id = ${id}`,
+          sql`DELETE FROM orders WHERE customer_id = ${id}`,
+          sql`DELETE FROM suggestions WHERE customer_id = ${id}`,
+          sql`DELETE FROM admin_notifications WHERE customer_id = ${id}`,
+          sql`DELETE FROM customers WHERE id = ${id}`
+        ]);
+      } catch { return send(res, 409, { error: "Suppression impossible : des données liées existent encore. Désactivez le compte à la place." }); }
+      await audit(me.id, "customer.delete", c.email);
+      return send(res, 200, { ok: true });
+    }
+    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen,
+      EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes' AS online,
       (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
       (SELECT count(*)::int FROM activity x WHERE x.customer_id = c.id) AS actions
       FROM customers c ORDER BY c.created_at DESC LIMIT 500`);

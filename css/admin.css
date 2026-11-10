@@ -44,3 +44,17 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 .tbl{width:100%;border-collapse:collapse;font-size:.85rem}.tbl th{text-align:left;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
 .tabs-in{display:flex;gap:6px;flex-wrap:wrap}
+
+/* ===== Super administrateur : avatars, présence, utilisateurs en ligne ===== */
+.avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;display:grid;place-items:center;font-weight:700;font-size:.85rem;overflow:hidden;flex:none}
+.avatar img{width:100%;height:100%;object-fit:cover}.avatar.lg{width:84px;height:84px;font-size:1.6rem}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:#9aa1bd}.dot.on{background:#12b76a;box-shadow:0 0 0 3px rgba(18,183,106,.25)}
+.presence{font-size:.72rem;font-weight:700;padding:2px 9px 2px 7px;border-radius:99px;display:inline-flex;align-items:center;gap:5px;vertical-align:middle}
+.presence::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.presence.online{color:#0f8a57;background:rgba(18,183,106,.16)}.presence.online::before{animation:pulse 1.8s infinite}
+.presence.offline{color:var(--mut);background:var(--line)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,183,106,.6)}70%{box-shadow:0 0 0 6px rgba(18,183,106,0)}100%{box-shadow:0 0 0 0 rgba(18,183,106,0)}}
+.who-id{display:flex;gap:10px;align-items:center}.who-role{display:block;opacity:.75}.who .presence{margin:3px 0}
+.who-card{display:flex;gap:16px;align-items:center;margin-bottom:14px}.uid{display:flex;gap:12px;align-items:center}
+.card .card{margin-bottom:8px;box-shadow:none}.archived{opacity:.65}
+.msg{position:relative}.msg-del{display:block;margin-top:4px;padding:2px 8px;font-size:.7rem;background:transparent;color:inherit;border:1px solid currentColor;border-radius:8px;opacity:.6}.msg-del:hover{opacity:1}

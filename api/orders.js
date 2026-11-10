@@ -36,6 +36,21 @@ async function handler(req, res) {
       await audit(u.id, "order." + status, String(id));
       return send(res, 200, { ok: true });
     }
+    if (req.method === "DELETE") {
+      if (u.role !== "super_admin") return send(res, 403, { error: "Réservé au super administrateur" });
+      const id = Number(req.query.id) || 0;
+      const [x] = await sql`SELECT id, property_id, status, payment_status FROM orders WHERE id = ${id}`;
+      if (!x) return send(res, 404, { error: "Demande introuvable." });
+      if (x.payment_status === "paid") return send(res, 409, { error: "Cette demande a un acompte payé : elle est conservée pour la comptabilité." });
+      try { await sql`DELETE FROM orders WHERE id = ${id}`; }
+      catch { return send(res, 409, { error: "Suppression impossible : des données liées existent encore." }); }
+      if (x.status === "confirmed" && x.property_id) {
+        const [k] = await sql`SELECT count(*)::int AS n FROM orders WHERE property_id = ${x.property_id} AND status = 'confirmed'`;
+        if (!k.n) await sql`UPDATE properties SET availability = 'available', updated_at = now() WHERE id = ${x.property_id} AND availability = 'reserved'`;
+      }
+      await audit(u.id, "order.delete", String(id));
+      return send(res, 200, { ok: true });
+    }
     return send(res, 405, { error: "Méthode refusée" });
   }
 

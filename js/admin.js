@@ -45,6 +45,59 @@
     reload(); return box;
   }
 
+  // ----- Avatar, temps écoulé -----
+  const initials = (n) => String(n || "?").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  function avatarEl(u, size) {
+    return h("div", { class: "avatar" + (size ? " " + size : ""), "aria-hidden": "true" }, u.avatar ? h("img", { src: u.avatar, alt: "" }) : initials(u.name || u.email));
+  }
+  function toAvatar(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !/^image\//.test(file.type)) return reject(new Error("Choisissez une image (JPG, PNG ou WebP)."));
+      const fr = new FileReader();
+      fr.onerror = () => reject(new Error("Lecture de l’image impossible."));
+      fr.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Image illisible."));
+        img.onload = () => {
+          const s = 256, c = document.createElement("canvas"), side = Math.min(img.width, img.height);
+          c.width = c.height = s;
+          c.getContext("2d").drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, s, s);
+          resolve(c.toDataURL("image/jpeg", 0.82));
+        };
+        img.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  const ago = (d) => {
+    if (!d) return "jamais";
+    const s = Math.max(0, Math.round((Date.now() - new Date(d)) / 1000));
+    if (s < 60) return "à l’instant";
+    if (s < 3600) return "il y a " + Math.round(s / 60) + " min";
+    if (s < 86400) return "il y a " + Math.round(s / 3600) + " h";
+    return "il y a " + Math.round(s / 86400) + " j";
+  };
+
+  // ----- Présence : l'administration signale chaque minute que l'utilisateur est en ligne -----
+  let presence = "online";
+  const presenceBadge = () => h("span", { class: "presence " + presence, "data-presence": "" }, presence === "online" ? "En ligne" : "Hors ligne");
+  function paintPresence() {
+    document.querySelectorAll("[data-presence]").forEach((el) => { el.className = "presence " + presence; el.textContent = presence === "online" ? "En ligne" : "Hors ligne"; });
+  }
+  async function beat() {
+    if (!me) return;
+    try {
+      const r = await fetch("/api/auth?a=ping", { credentials: "same-origin" });
+      if (r.status === 401) { me = null; render(); return; }
+      presence = r.ok ? "online" : "offline";
+    } catch (e) { presence = "offline"; }
+    paintPresence();
+  }
+  setInterval(() => { if (!document.hidden) beat(); }, 60000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) beat(); });
+  window.addEventListener("online", beat);
+  window.addEventListener("offline", () => { presence = "offline"; paintPresence(); });
+
   function loginView() {
     const err = h("p", { class: "err", role: "alert" });
     const email = h("input", { type: "email", required: true, autocomplete: "username" });
@@ -53,7 +106,7 @@
     const codeBox = h("div", { hidden: true }, h("br"), field("Code de double authentification", code));
     const form = h("form", { class: "card login", onsubmit: async (e) => {
       e.preventDefault(); err.textContent = "";
-      try { me = (await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value, code: code.value })).user; await load(); render(); }
+      try { await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value, code: code.value }); me = (await api("/api/auth?a=me")).user; presence = "online"; await load(); render(); }
       catch (x) { err.textContent = x.message; if (x.data && x.data.needCode) { codeBox.hidden = false; code.focus(); } }
     } }, h("h1", {}, "Administration"), h("p", { class: "muted" }, "Connexion réservée aux administrateurs."),
       field("E-mail", email), h("br"), field("Mot de passe", pw), codeBox, err, h("button", { type: "submit" }, "Se connecter"));
@@ -109,15 +162,45 @@
     return form;
   }
 
-  function listView() {
-    return h("div", {}, h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, props.length + " annonce(s)"),
-      h("button", { onclick: () => { tab = "form"; window._edit = null; render(); } }, "+ Ajouter")),
-      ...props.map((p) => h("div", { class: "card row" },
-        h("div", {}, h("strong", {}, p.title), " ", h("span", { class: "pill" }, p.published ? "Publié" : "Masqué"), " ", h("span", { class: "pill" }, AVL[p.availability] || "Disponible"), h("br"),
-          h("span", { class: "muted" }, p.location + " · " + new Intl.NumberFormat("fr-FR").format(p.price) + " " + p.currencySymbol + (p.priceSuffix || ""))),
-        h("div", { class: "row" }, h("button", { class: "ghost", onclick: () => { tab = "form"; window._edit = p; render(); } }, "Modifier"),
-          h("button", { class: "danger", onclick: async () => { if (!confirm("Supprimer « " + p.title + " » ?")) return; await api("/api/properties?id=" + encodeURIComponent(p.id), "DELETE"); await load(); render(); } }, "Supprimer")))));
+  // Ligne d'une annonce, avec les actions : modifier, archiver / restaurer, supprimer
+  function propRow(p) {
+    const refresh = async () => { await load(); render(); };
+    return h("div", { class: "card row" + (p.archived ? " archived" : "") },
+      h("div", {}, h("strong", {}, p.title), " ", h("span", { class: "pill" }, p.archived ? "Archivée" : p.published ? "Publié" : "Masqué"), " ", h("span", { class: "pill" }, AVL[p.availability] || "Disponible"), h("br"),
+        h("span", { class: "muted" }, p.location + " · " + new Intl.NumberFormat("fr-FR").format(p.price) + " " + p.currencySymbol + (p.priceSuffix || ""))),
+      h("div", { class: "row" },
+        h("button", { class: "ghost", onclick: () => { tab = "form"; window._edit = p; render(); } }, "Modifier"),
+        h("button", { class: "ghost", onclick: async () => {
+          if (!p.archived && !confirm("Archiver « " + p.title + " » ? Elle disparaît du site mais reste restaurable à tout moment.")) return;
+          try { await api("/api/properties?id=" + encodeURIComponent(p.id), "PATCH", { archived: !p.archived }); await refresh(); } catch (x) { alert(x.message); }
+        } }, p.archived ? "Restaurer" : "Archiver"),
+        h("button", { class: "danger", onclick: async () => {
+          if (!confirm("Supprimer définitivement « " + p.title + " » ? Cette action est irréversible (pour la garder, utilisez plutôt Archiver).")) return;
+          try { await api("/api/properties?id=" + encodeURIComponent(p.id), "DELETE"); await refresh(); } catch (x) { alert(x.message); }
+        } }, "Supprimer")));
   }
+
+  let propFilter = "active";
+  function listView() {
+    const nArch = props.filter((p) => p.archived).length;
+    const shown = props.filter((p) => (propFilter === "all" ? true : propFilter === "archived" ? p.archived : !p.archived));
+    const bar = h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...[["active", "Actives (" + (props.length - nArch) + ")"], ["archived", "Archivées (" + nArch + ")"], ["all", "Toutes (" + props.length + ")"]]
+      .map(([k, l]) => h("button", { class: k === propFilter ? "" : "ghost", onclick: () => { propFilter = k; render(); } }, l)));
+    return h("div", {}, h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, shown.length + " annonce(s)"),
+      h("button", { onclick: () => { tab = "form"; window._edit = null; render(); } }, "+ Ajouter")), bar,
+      ...(shown.length ? shown.map(propRow) : [h("p", { class: "muted" }, "Aucune annonce dans cette catégorie.")]));
+  }
+
+  // Carte du tableau de bord : gérer les maisons sans quitter la page d'accueil de l'administration
+  function housesCard() {
+    const live = props.filter((p) => !p.archived);
+    return h("div", { class: "card" }, h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", { style: "margin:0" }, "Gérer les maisons"),
+      h("button", { onclick: () => { tab = "form"; window._edit = null; render(); } }, "+ Ajouter une maison")),
+      ...(live.length ? live.slice(0, 5).map(propRow) : [h("p", { class: "muted" }, "Aucune annonce active.")]),
+      h("div", { class: "row" }, h("span", { class: "muted" }, (props.length - live.length) + " archivée(s)"),
+        h("button", { class: "ghost", onclick: () => { tab = "annonces"; render(); } }, "Toutes les annonces (" + props.length + ")")));
+  }
+
 
   async function messagesView() {
     const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
@@ -145,6 +228,7 @@
           h("div", {}, h("strong", {}, u.name || u.email), " ", h("span", { class: "pill" }, u.role === "super_admin" ? "Super admin" : "Admin"), u.active ? "" : h("span", { class: "pill" }, "Désactivé"), h("br"), h("span", { class: "muted" }, u.email)),
           h("div", { class: "row" },
             h("button", { class: "ghost", onclick: async () => { const p = prompt("Nouveau mot de passe (10 caractères min.)"); if (!p) return; try { await api("/api/admins?id=" + u.id, "PATCH", { password: p }); alert("Mot de passe modifié."); } catch (x) { alert(x.message); } } }, "Mot de passe"),
+            u.id !== me.id ? h("button", { class: "ghost", onclick: async () => { if (!confirm("Fermer toutes les sessions de " + u.email + " ?")) return; await api("/api/admins?id=" + u.id, "PATCH", { disconnect: true }); alert("Session fermée."); } }, "Déconnecter") : "",
             u.id !== me.id ? h("button", { class: "ghost", onclick: async () => { await api("/api/admins?id=" + u.id, "PATCH", { active: !u.active }); reload(); } }, u.active ? "Désactiver" : "Activer") : "",
             u.id !== me.id ? h("button", { class: "danger", onclick: async () => { if (confirm("Supprimer " + u.email + " ?")) { await api("/api/admins?id=" + u.id, "DELETE"); reload(); } } }, "Supprimer") : ""))));
     }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
@@ -162,7 +246,8 @@
           o.payment_status === "cash_pending" ? h("button", { onclick: async () => { await api("/api/pay?a=markpaid", "POST", { orderId: o.id }); reload(); } }, "Espèces reçues : marquer payé") : "") : "",
         o.status === "pending" ? h("div", { class: "row" },
           h("button", { onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "confirmed" }); reload(); } }, "Accepter (bien réservé)"),
-          h("button", { class: "danger", onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "rejected" }); reload(); } }, "Refuser")) : ""))]);
+          h("button", { class: "danger", onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "rejected" }); reload(); } }, "Refuser")) : "",
+        me.role === "super_admin" && o.payment_status !== "paid" ? h("div", { class: "row" }, h("button", { class: "danger", onclick: async () => { if (!confirm("Supprimer définitivement cette demande ?")) return; try { await api("/api/orders?admin=1&id=" + o.id, "DELETE"); reload(); } catch (x) { alert(x.message); } } }, "Supprimer la demande")) : ""))]);
   }
   function notifsView() {
     return lazy("/api/console?a=notifications", (rows) => {
@@ -171,15 +256,34 @@
         h("div", { class: "row" }, h("strong", {}, n.title), h("span", { class: "muted" }, when(n.created_at))), h("div", { class: "muted" }, n.detail)))];
     });
   }
+  function customerCard(c, reload) {
+    const box = h("div", { class: "card" });
+    const url = "/api/console?a=customers&id=" + c.id;
+    const act = async (fn) => { try { await fn(); reload(); } catch (x) { alert(x.message); } };
+    const edit = () => {
+      const n = h("input", { value: c.name, maxlength: 100 }), e = h("input", { type: "email", value: c.email }), t = h("input", { type: "tel", value: c.phone || "" }), err = h("p", { class: "err", role: "alert" });
+      box.replaceChildren(h("form", { onsubmit: async (ev) => { ev.preventDefault(); err.textContent = ""; try { await api(url, "PATCH", { name: n.value, email: e.value, phone: t.value }); reload(); } catch (x) { err.textContent = x.message; } } },
+        h("h2", {}, "Modifier le client"), h("div", { class: "grid" }, field("Nom", n), field("E-mail", e), field("Téléphone", t)), err,
+        h("div", { class: "row" }, h("button", { type: "submit" }, "Enregistrer"), h("button", { type: "button", class: "ghost", onclick: view }, "Annuler"))));
+    };
+    const view = () => box.replaceChildren(h("div", { class: "row" },
+      h("div", {}, h("span", { class: "dot " + (c.online ? "on" : "off") }), h("strong", {}, c.name), " ", c.online ? h("span", { class: "presence online" }, "En ligne") : "", c.active ? "" : h("span", { class: "pill" }, "Désactivé"), h("br"),
+        h("span", { class: "muted" }, c.email + (c.phone ? " · " + c.phone : "")), h("br"),
+        h("span", { class: "muted" }, "Inscrit le " + when(c.created_at) + " · " + c.orders + " demande(s) · " + c.actions + " action(s) · " + (c.online ? "actif maintenant" : "vu " + ago(c.last_seen)))),
+      h("div", { class: "row" },
+        h("button", { class: "ghost", onclick: () => { window._cust = c.id; tab = "activity"; render(); } }, "Activité"),
+        h("button", { class: "ghost", onclick: edit }, "Modifier"),
+        h("button", { class: "ghost", onclick: () => { const p = prompt("Nouveau mot de passe pour " + c.email + " (8 caractères min.)"); if (p) act(async () => { await api(url, "PATCH", { password: p }); alert("Mot de passe modifié. Le client a été déconnecté."); }); } }, "Mot de passe"),
+        c.online ? h("button", { class: "ghost", onclick: () => { if (confirm("Déconnecter " + c.name + " maintenant ?")) act(() => api(url, "PATCH", { disconnect: true })); } }, "Déconnecter") : "",
+        h("button", { class: c.active ? "danger" : "ghost", onclick: () => act(() => api(url, "PATCH", { active: !c.active })) }, c.active ? "Désactiver" : "Réactiver"),
+        h("button", { class: "danger", onclick: () => { if (confirm("Supprimer définitivement le compte de " + c.name + " (" + c.email + ") avec ses demandes et son historique ? Irréversible.")) act(() => api(url, "DELETE")); } }, "Supprimer"))));
+    view();
+    return box;
+  }
   function customersView() {
-    return lazy("/api/console?a=customers", (rows, reload) => [h("h2", {}, rows.length + " client(s) inscrit(s)"),
-      ...rows.map((c) => h("div", { class: "card row" },
-        h("div", {}, h("strong", {}, c.name), " ", c.active ? "" : h("span", { class: "pill" }, "Désactivé"), h("br"),
-          h("span", { class: "muted" }, c.email + (c.phone ? " · " + c.phone : "")), h("br"),
-          h("span", { class: "muted" }, "Inscrit le " + when(c.created_at) + " · " + c.orders + " demande(s) · " + c.actions + " action(s)")),
-        h("div", { class: "row" },
-          h("button", { class: "ghost", onclick: () => { window._cust = c.id; tab = "activity"; render(); } }, "Voir l’activité"),
-          h("button", { class: c.active ? "danger" : "ghost", onclick: async () => { await api("/api/console?a=customers&id=" + c.id, "PATCH", { active: !c.active }); reload(); } }, c.active ? "Désactiver" : "Réactiver"))))]);
+    return lazy("/api/console?a=customers", (rows, reload) => [
+      h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, rows.length + " client(s) inscrit(s)"), h("span", { class: "muted" }, rows.filter((c) => c.online).length + " en ligne")),
+      ...rows.map((c) => customerCard(c, reload))]);
   }
   function activityView() {
     const q = window._cust ? "&customer=" + window._cust : "";
@@ -226,6 +330,7 @@
           kpi("Acomptes encaissés", rev, s.orders.cash_pending + " espèces à encaisser"),
           kpi("Messages non lus", counts.chat + s.messagesUnread, counts.chat + " chat · " + s.messagesUnread + " contact", counts.chat + s.messagesUnread > 0),
           kpi("Suggestions", counts.suggestions, "non lues")),
+        housesCard(),
         h("div", { class: "two" },
           h("div", { class: "card" }, h("h2", {}, "Activité des 14 derniers jours"), barChart(s.days),
             h("div", { class: "legend" }, h("span", {}, h("b", { style: "background:#4f46e5" }), "Actions des clients"), h("span", {}, h("b", { style: "background:#f59e0b" }), "Demandes de réservation"))),
@@ -255,7 +360,8 @@
         const rows = await api("/api/chat?a=admin_messages&thread=" + cur);
         if (!first && rows.length && rows[rows.length - 1].id === lastId) return;
         lastId = rows.length ? rows[rows.length - 1].id : 0;
-        msgsBox.replaceChildren(...rows.map((m) => h("div", { class: "msg" + (m.mine ? " mine" : "") }, h("small", {}, m.who + " · " + when(m.created_at)), m.body)));
+        msgsBox.replaceChildren(...rows.map((m) => h("div", { class: "msg" + (m.mine ? " mine" : "") }, h("small", {}, m.who + " · " + when(m.created_at)), m.body,
+          me.role === "super_admin" ? h("button", { class: "msg-del", title: "Supprimer ce message", onclick: async () => { if (!confirm("Supprimer ce message ?")) return; try { await api("/api/chat?a=admin_delete_message", "POST", { id: m.id }); await loadMsgs(true); loadList(); } catch (x) { alert(x.message); } } }, "Supprimer") : "")));
         msgsBox.scrollTop = msgsBox.scrollHeight;
       } catch (e) {}
     }
@@ -312,7 +418,34 @@
       }
     };
     draw();
-    return h("div", {}, profile, pw, tbox);
+
+    // Identité : photo, nom d'affichage, ville, présentation, et état de présence
+    let avatar = me.avatar || "";
+    const nm = h("input", { value: me.name || "", maxlength: 100 }), city = h("input", { value: me.city || "", maxlength: 80 }), bio = h("textarea", { maxlength: 500 }, me.bio || "");
+    const imsg = h("p", { class: "err", role: "status" }), slot = h("div", { class: "avatar-slot" }, avatarEl(me, "lg"));
+    const repaint = () => slot.replaceChildren(avatarEl({ name: nm.value || me.name, email: me.email, avatar }, "lg"));
+    nm.addEventListener("input", repaint);
+    const file = h("input", { type: "file", accept: "image/*", hidden: true, onchange: async (e) => {
+      imsg.textContent = "";
+      try { avatar = await toAvatar(e.target.files[0]); repaint(); } catch (x) { imsg.className = "err"; imsg.textContent = x.message; } finally { e.target.value = ""; }
+    } });
+    const flash = window._flash; window._flash = null;
+    const identity = h("form", { class: "card", onsubmit: async (e) => {
+      e.preventDefault(); imsg.textContent = "";
+      try {
+        const r = await api("/api/auth?a=profile", "POST", { name: nm.value, phone: me.phone || "", whatsapp: !!me.whatsapp_optin, city: city.value, bio: bio.value, avatar });
+        Object.assign(me, r.user); window._flash = "Profil enregistré."; render();
+      } catch (x) { imsg.className = "err"; imsg.textContent = x.message; }
+    } },
+      h("div", { class: "who-card" }, slot, h("div", {}, h("strong", { style: "font-size:1.1rem" }, me.name || me.email), " ", presenceBadge(), h("br"),
+        h("span", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur")), h("br"),
+        h("span", { class: "muted" }, "Votre statut est visible par le super administrateur dans Supervision > Utilisateurs."))),
+      h("div", { class: "row", style: "justify-content:flex-start;margin-bottom:12px" },
+        h("button", { type: "button", class: "ghost", onclick: () => file.click() }, avatar ? "Changer la photo" : "Ajouter une photo"),
+        avatar ? h("button", { type: "button", class: "ghost", onclick: () => { avatar = ""; repaint(); } }, "Retirer") : "", file),
+      h("div", { class: "grid" }, field("Nom affiché", nm), field("Ville", city)), h("br"), field("Présentation", bio), flash ? h("p", { class: "ok" }, flash) : "", imsg,
+      h("button", { type: "submit" }, "Enregistrer mon profil"));
+    return h("div", {}, identity, profile, pw, tbox);
   }
 
 
@@ -413,10 +546,55 @@
     });
   }
 
+  function usersPanel() {
+    let filter = "all", term = "", data = { admins: [], customers: [] };
+    const box = h("div", {}), kpis = h("div", { class: "kpis" }), list = h("div", {}), stamp = h("span", { class: "muted" });
+    const search = h("input", { type: "search", placeholder: "Rechercher un nom ou un e-mail…", oninput: (e) => { term = e.target.value.trim().toLowerCase(); draw(); } });
+    const bar = h("div", { class: "tabs-in" });
+    const everyone = () => [...data.admins.map((u) => ({ ...u, kind: "admin" })), ...data.customers.map((u) => ({ ...u, kind: "client" }))];
+    const kpi = (l, v, s, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), s ? h("div", { class: "kpi-s" }, s) : "");
+    async function force(u) {
+      if (!confirm("Déconnecter " + (u.name || u.email) + " maintenant ?")) return;
+      try { await api(u.kind === "admin" ? "/api/admins?id=" + u.id : "/api/console?a=customers&id=" + u.id, "PATCH", { disconnect: true }); await load(); } catch (x) { alert(x.message); }
+    }
+    function row(u) {
+      const mine = u.kind === "admin" && u.id === me.id;
+      return h("div", { class: "card row" },
+        h("div", { class: "uid" }, avatarEl(u), h("div", {}, h("span", { class: "dot " + (u.online ? "on" : "off") }), h("strong", {}, u.name || u.email), mine ? " (vous)" : "", " ",
+          h("span", { class: "pill" }, u.kind === "client" ? "Client" : u.role === "super_admin" ? "Super admin" : "Admin"), u.active ? "" : h("span", { class: "pill" }, "Désactivé"), h("br"),
+          h("span", { class: "muted" }, u.email + " · " + (u.online ? "en ligne maintenant" : "dernière activité " + ago(u.last_seen))))),
+        h("div", { class: "row" },
+          u.kind === "client" ? h("button", { class: "ghost", onclick: () => { window._cust = u.id; tab = "activity"; render(); } }, "Activité") : "",
+          u.online && !mine ? h("button", { class: "ghost", onclick: () => force(u) }, "Déconnecter") : ""));
+    }
+    function draw() {
+      const all = everyone(), on = all.filter((u) => u.online), isA = (u) => u.kind === "admin";
+      kpis.replaceChildren(
+        kpi("En ligne maintenant", on.length, on.filter(isA).length + " admin(s) · " + on.filter((u) => !isA(u)).length + " client(s)", on.length > 0),
+        kpi("Hors ligne", all.length - on.length, "sur " + all.length + " comptes"),
+        kpi("Administrateurs", on.filter(isA).length + " / " + data.admins.length, "en ligne"),
+        kpi("Clients", on.filter((u) => !isA(u)).length + " / " + data.customers.length, "en ligne"));
+      bar.replaceChildren(...[["all", "Tous (" + all.length + ")"], ["on", "En ligne (" + on.length + ")"], ["off", "Hors ligne (" + (all.length - on.length) + ")"]]
+        .map(([k, l]) => h("button", { class: k === filter ? "" : "ghost", onclick: () => { filter = k; draw(); } }, l)));
+      const shown = all.filter((u) => (filter === "on" ? u.online : filter === "off" ? !u.online : true) && (!term || ((u.name || "") + " " + u.email).toLowerCase().includes(term)))
+        .sort((a, b) => (b.online - a.online) || (new Date(b.last_seen || 0) - new Date(a.last_seen || 0)));
+      list.replaceChildren(...(shown.length ? shown.map(row) : [h("p", { class: "muted" }, "Aucun utilisateur dans cette vue.")]));
+    }
+    async function load() {
+      try { data = await api("/api/monitor?a=users"); stamp.textContent = "Actualisé à " + new Date().toLocaleTimeString("fr-FR"); draw(); }
+      catch (x) { list.replaceChildren(h("p", { class: "err" }, x.message)); }
+    }
+    box.append(h("div", { class: "row", style: "margin-bottom:10px" }, h("p", { class: "muted", style: "margin:0" }, "« En ligne » = session ouverte et activité dans les 5 dernières minutes. Mise à jour automatique toutes les 20 secondes."),
+      h("span", {}, stamp, " ", h("button", { class: "ghost", onclick: load }, "Actualiser"))), kpis, h("div", { class: "row", style: "margin:12px 0" }, bar, h("div", { style: "min-width:240px;flex:1;max-width:340px" }, search)), list);
+    load();
+    pollTimer = setInterval(() => { if (!document.hidden && box.isConnected) load(); }, 20000);
+    return box;
+  }
+
   function supervisionView() {
     stopPoll();
-    const tabs = [["overview", "Vue d’ensemble"], ["db", "Base de données"], ["server", "Serveur"], ["app", "Application & API"], ["sec", "Sécurité & attaques"], ["code", "Code source"]];
-    const body = supTab === "db" ? dbPanel() : supTab === "server" ? serverPanel()
+    const tabs = [["overview", "Vue d’ensemble"], ["users", "Utilisateurs en ligne"], ["db", "Base de données"], ["server", "Serveur"], ["app", "Application & API"], ["sec", "Sécurité & attaques"], ["code", "Code source"]];
+    const body = supTab === "users" ? usersPanel() : supTab === "db" ? dbPanel() : supTab === "server" ? serverPanel()
       : supTab === "app" ? eventsPanel([["error", "Bugs serveur"], ["contract", "API incohérentes"], ["validation", "Requêtes invalides"], ["slow", "Lenteurs"], ["client", "Bugs navigateur"]], "Bugs et incohérences entre le site et ses API. « API incohérentes » = routes inexistantes ou méthodes refusées : le site appelle quelque chose que le serveur ne comprend pas.")
       : supTab === "sec" ? eventsPanel([["security", "Accès refusés & attaques"]], "Connexions échouées (401), accès interdits (403) et blocages anti-abus (429). Une même adresse IP qui revient souvent indique une attaque par force brute.")
       : supTab === "code" ? codePanel() : overviewPanel();
@@ -446,7 +624,7 @@
         nav.append(h("button", { class: "nav" + (tab === id || (tab === "form" && id === "annonces") ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""));
       }
     }
-    nav.append(h("div", { class: "who" }, h("b", {}, me.name || me.email), sup ? "Super administrateur" : "Administrateur"));
+    nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur")))));
     const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
       : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()

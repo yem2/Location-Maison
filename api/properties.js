@@ -1,11 +1,11 @@
-import { sql, send, requireUser, audit, str, notifyCustomer , wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, str, notifyCustomer, ensureSchema, wrap } from "./_lib.js";
 
 const toFront = (r) => ({
   id: r.id, title: r.title, location: r.location, price: Number(r.price), currency: r.currency,
   currencySymbol: r.currency_symbol, operation: r.operation, kind: r.kind, kindLabel: r.kind_label,
   image: r.image, alt: r.alt, rooms: r.rooms, bedrooms: r.bedrooms, bathrooms: r.bathrooms, area: r.area,
   description: r.description, features: r.features, label: r.label, priceSuffix: r.price_suffix || undefined,
-  isNew: r.is_new, isExclusive: r.is_exclusive, order: r.position, published: r.published, availability: r.availability, deposit: Number(r.deposit)
+  isNew: r.is_new, isExclusive: r.is_exclusive, order: r.position, published: r.published, archived: !!r.archived, availability: r.availability, deposit: Number(r.deposit)
 });
 
 const slug = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -34,6 +34,7 @@ async function handler(req, res) {
   if (req.method === "GET") {
     const all = req.query.all === "1" && (await requireUser(req, res));
     if (req.query.all === "1" && !all) return;
+    if (all) await ensureSchema();
     const rows = all
       ? await sql`SELECT * FROM properties ORDER BY position, created_at`
       : await sql`SELECT * FROM properties WHERE published ORDER BY position, created_at`;
@@ -47,6 +48,17 @@ async function handler(req, res) {
     const id = str(req.query.id, 80);
     await sql`DELETE FROM properties WHERE id = ${id}`;
     await audit(user.id, "property.delete", id);
+    return send(res, 200, { ok: true });
+  }
+  // Archiver / restaurer : l'annonce disparaît du site public mais reste en base (réversible)
+  if (req.method === "PATCH") {
+    if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
+    const id = str(req.query.id, 80), archived = req.body?.archived === true;
+    const rows = archived
+      ? await sql`UPDATE properties SET archived = true, archived_at = now(), published = false, updated_at = now() WHERE id = ${id} RETURNING title`
+      : await sql`UPDATE properties SET archived = false, archived_at = NULL, published = true, updated_at = now() WHERE id = ${id} RETURNING title`;
+    if (!rows.length) return send(res, 404, { error: "Annonce introuvable." });
+    await audit(user.id, archived ? "property.archive" : "property.restore", id);
     return send(res, 200, { ok: true });
   }
   if (req.method !== "POST" && req.method !== "PUT") return send(res, 405, { error: "Méthode refusée" });
@@ -63,8 +75,10 @@ async function handler(req, res) {
     return send(res, 201, { id });
   }
   const id = str(req.body.id, 80);
-  const [old] = await sql`SELECT availability, title FROM properties WHERE id = ${id}`;
-  await sql`UPDATE properties SET title=${p.title},location=${p.location},price=${p.price},currency=${p.currency},currency_symbol=${p.currencySymbol},operation=${p.operation},kind=${p.kind},kind_label=${p.kindLabel},image=${p.image},alt=${p.alt},rooms=${p.rooms},bedrooms=${p.bedrooms},bathrooms=${p.bathrooms},area=${p.area},description=${p.description},features=${f}::jsonb,label=${p.label},price_suffix=${p.priceSuffix},is_new=${p.isNew},is_exclusive=${p.isExclusive},position=${p.position},published=${p.published},availability=${p.availability},deposit=${p.deposit},updated_at=now() WHERE id=${id}`;
+  const hasArch = await ensureSchema();
+  const [old] = hasArch ? await sql`SELECT availability, title, archived FROM properties WHERE id = ${id}` : await sql`SELECT availability, title FROM properties WHERE id = ${id}`;
+  const published = p.published && !(old && old.archived); // une annonce archivée ne peut pas être republiée sans restauration
+  await sql`UPDATE properties SET title=${p.title},location=${p.location},price=${p.price},currency=${p.currency},currency_symbol=${p.currencySymbol},operation=${p.operation},kind=${p.kind},kind_label=${p.kindLabel},image=${p.image},alt=${p.alt},rooms=${p.rooms},bedrooms=${p.bedrooms},bathrooms=${p.bathrooms},area=${p.area},description=${p.description},features=${f}::jsonb,label=${p.label},price_suffix=${p.priceSuffix},is_new=${p.isNew},is_exclusive=${p.isExclusive},position=${p.position},published=${published},availability=${p.availability},deposit=${p.deposit},updated_at=now() WHERE id=${id}`;
   if (old && old.availability === "available" && p.availability !== "available") {
     const waiting = await sql`SELECT DISTINCT customer_id FROM orders WHERE property_id = ${id} AND status = 'pending'`;
     for (const r of waiting) await notifyCustomer(r.customer_id, `Le bien « ${p.title} » n’est plus disponible.`);

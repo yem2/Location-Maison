@@ -186,6 +186,22 @@ async function handler(req, res) {
     return send(res, 200, { events24: Object.fromEntries(ev.map((x) => [x.kind, x.n])), stats, daily, ips, checks, logSize: t.n, uptimeSec: Math.round((Date.now() - BOOT) / 1000) });
   }
 
+  // Présence : un utilisateur est « en ligne » s'il a une session valide et une activité de moins de 5 minutes
+  if (a === "users") {
+    const admins = await sql`SELECT u.id, u.name, u.email, u.role, u.active, u.last_seen,
+      (EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.expires_at > now()) AND u.last_seen > now() - interval '5 minutes') AS online
+      FROM users u ORDER BY (u.role = 'super_admin') DESC, u.created_at`;
+    const customers = await sql`SELECT c.id, c.name, c.email, c.active, c.last_seen, c.last_login,
+      (EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes') AS online
+      FROM customers c ORDER BY c.last_seen DESC NULLS LAST LIMIT 500`;
+    let avatars = {};
+    try { (await sql`SELECT id, avatar FROM users WHERE avatar <> ''`).forEach((r) => { avatars[r.id] = r.avatar; }); } catch { /* colonne absente */ }
+    return send(res, 200, {
+      admins: admins.map((x) => ({ ...x, online: !!x.online || x.id === me.id, avatar: avatars[x.id] || "" })),
+      customers: customers.map((x) => ({ ...x, online: !!x.online }))
+    });
+  }
+
   if (a === "events") {
     const kind = KINDS.includes(req.query.kind) ? req.query.kind : null;
     const rows = kind

@@ -28,6 +28,10 @@ async function handler(req, res) {
       await sql`DELETE FROM sessions WHERE user_id = ${id}`;
       await audit(me.id, "admin.password", target.email);
     }
+    if (b.disconnect === true && target.id !== me.id) {
+      await sql`DELETE FROM sessions WHERE user_id = ${id}`;
+      await audit(me.id, "admin.disconnect", target.email);
+    }
     if (typeof b.active === "boolean" && target.id !== me.id) {
       await sql`UPDATE users SET active = ${b.active} WHERE id = ${id}`;
       if (!b.active) await sql`DELETE FROM sessions WHERE user_id = ${id}`;

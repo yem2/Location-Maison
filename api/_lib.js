@@ -53,6 +53,20 @@ export async function currentUser(req) {
   return u;
 }
 
+// Colonnes ajoutées par migration-superadmin.sql (archivage des biens, profil des administrateurs).
+// Créées automatiquement au premier usage si la migration n'a pas été lancée ; renvoie false si impossible.
+let schemaP;
+export function ensureSchema() {
+  schemaP ??= (async () => {
+    try {
+      await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
+      return true;
+    } catch { return false; }
+  })().then((ok) => { if (!ok) schemaP = null; return ok; });
+  return schemaP;
+}
+
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;

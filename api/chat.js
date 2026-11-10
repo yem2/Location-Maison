@@ -1,4 +1,4 @@
-import { sql, send, throttle, requireCustomer, requireUser, notifyAdmins, notifyCustomer, str , wrap } from "./_lib.js";
+import { sql, send, throttle, requireCustomer, requireUser, notifyAdmins, notifyCustomer, audit, str, wrap } from "./_lib.js";
 
 const snippet = (s) => String(s).replace(/\s+/g, " ").slice(0, 90);
 
@@ -23,6 +23,15 @@ async function handler(req, res) {
         FROM chat_threads t JOIN customers ca ON ca.id = t.customer_a LEFT JOIN customers cb ON cb.id = t.customer_b
         WHERE (t.kind = 'support' OR ${sup}) AND EXISTS (SELECT 1 FROM chat_messages m WHERE m.thread_id = t.id)
         ORDER BY t.last_message_at DESC LIMIT 200`);
+    }
+    // Modération : le super administrateur peut supprimer n'importe quel message
+    if (a === "admin_delete_message" && req.method === "POST") {
+      if (!sup) return send(res, 403, { error: "Réservé au super administrateur" });
+      const mid = Number(req.body?.id) || 0;
+      const gone = await sql`DELETE FROM chat_messages WHERE id = ${mid} RETURNING id`;
+      if (!gone.length) return send(res, 404, { error: "Message introuvable" });
+      await audit(me.id, "chat.delete_message", String(mid));
+      return send(res, 200, { ok: true });
     }
     const tid = Number(req.query.thread || req.body?.thread) || 0;
     const [t] = await sql`SELECT * FROM chat_threads WHERE id = ${tid}`;

@@ -1,10 +1,11 @@
 # Supervision (réservée au super administrateur)
 
-Menu **Supervision** du tableau de bord, six onglets :
+Menu **Supervision** du tableau de bord, sept onglets :
 
 | Onglet | Ce que vous y voyez |
 |---|---|
 | Vue d'ensemble | État général, trafic API sur 14 jours, erreurs, tentatives suspectes, IP les plus actives, résultats des contrôles quotidiens |
+| Utilisateurs en ligne | Tous les comptes (administrateurs et clients) : en ligne / hors ligne, dernière activité, recherche, filtres, déconnexion forcée |
 | Base de données | Latence, taille, connexions, cache, transactions, blocages, tables, requêtes en cours et requêtes lentes |
 | Serveur | Environnement (Node, région, version déployée), secrets configurés, sondes de disponibilité, en-têtes de sécurité, déploiements Vercel |
 | Application & API | Bugs serveur (500), API incohérentes (404/405), requêtes invalides (400), lenteurs, bugs JavaScript des visiteurs |

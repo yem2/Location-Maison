@@ -1,12 +1,23 @@
-import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone , wrap } from "./_lib.js";
+import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone, ensureSchema, wrap } from "./_lib.js";
 
+const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
 async function handler(req, res) {
   const a = req.query.a;
   if (a === "me") {
     const u = await currentUser(req);
-    return send(res, u ? 200 : 401, u ? { user: u } : { error: "Non connecté" });
+    if (!u) return send(res, 401, { error: "Non connecté" });
+    let user = u;
+    if (await ensureSchema()) {
+      try { const [x] = await sql`SELECT avatar, bio, city FROM users WHERE id = ${u.id}`; user = { ...u, ...x }; } catch { /* colonnes indisponibles */ }
+    }
+    return send(res, 200, { user });
+  }
+  // Signal de présence : l'administration l'appelle chaque minute tant que la page est ouverte
+  if (a === "ping") {
+    const u = await currentUser(req);
+    return send(res, u ? 200 : 401, u ? { ok: true } : { error: "Non connecté" });
   }
   if (req.method !== "POST" || !sameOrigin(req)) return send(res, 405, { error: "Méthode refusée" });
   if (a === "logout") { await destroySession(req, res); return send(res, 200, { ok: true }); }
@@ -47,8 +58,27 @@ async function handler(req, res) {
   if (a === "profile") {
     const phone = str(b.phone, 30), opt = b.whatsapp === true;
     if (opt && !normalizePhone(phone)) return send(res, 400, { error: "Indiquez un numéro WhatsApp valide avec l’indicatif du pays." });
-    await sql`UPDATE users SET phone = ${phone}, whatsapp_optin = ${opt} WHERE id = ${me.id}`;
-    return send(res, 200, { ok: true });
+    const name = "name" in b ? str(b.name, 100) : row.name;
+    const extra = "city" in b || "bio" in b || "avatar" in b;
+    let av = null;
+    if ("avatar" in b) {
+      av = typeof b.avatar === "string" ? b.avatar : "";
+      if (av && (av.length > 120000 || !AVATAR_RE.test(av))) return send(res, 400, { error: "Photo invalide ou trop lourde (image JPG, PNG ou WebP)." });
+    }
+    if (extra && !(await ensureSchema())) return send(res, 500, { error: "Le profil complet n’est pas encore activé (exécutez migration-superadmin.sql dans Neon)." });
+    // Tout est validé : on écrit
+    await sql`UPDATE users SET name = ${name}, phone = ${phone}, whatsapp_optin = ${opt} WHERE id = ${me.id}`;
+    const out = { name, phone, whatsapp_optin: opt };
+    if (extra) {
+      const cur = (await sql`SELECT avatar, bio, city FROM users WHERE id = ${me.id}`)[0] || {};
+      const m = { avatar: cur.avatar || "", bio: cur.bio || "", city: cur.city || "" };
+      if ("city" in b) m.city = str(b.city, 80);
+      if ("bio" in b) m.bio = str(b.bio, 500);
+      if (av !== null) m.avatar = av;
+      await sql`UPDATE users SET avatar = ${m.avatar}, bio = ${m.bio}, city = ${m.city} WHERE id = ${me.id}`;
+      Object.assign(out, m);
+    }
+    return send(res, 200, { ok: true, user: out });
   }
   if (a === "password") {
     const next = typeof b.next === "string" ? b.next : "";
