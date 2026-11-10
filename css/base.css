@@ -106,7 +106,7 @@ section[id] { scroll-margin-top: 88px; }
 .hero::after {
   content: "";
   position: absolute; inset: 0; left: 48%;
-  background: url("assets/images/maison-hero.webp") center/cover no-repeat;
+  background: url("../assets/images/maison-hero.webp") center/cover no-repeat;
   z-index: 0;
 }
 /* Overlay gradient sur l'image */

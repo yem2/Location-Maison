@@ -1,0 +1,23 @@
+{
+  "name": "Maison — Location et vente immobilière",
+  "short_name": "Maison",
+  "description": "Trouvez, réservez et suivez vos biens immobiliers.",
+  "lang": "fr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f8f6",
+  "theme_color": "#16766e",
+  "icons": [
+    { "src": "/assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Mon espace", "url": "/compte", "icons": [{ "src": "/assets/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Acheter", "url": "/acheter" },
+    { "name": "Louer", "url": "/louer" }
+  ]
+}
