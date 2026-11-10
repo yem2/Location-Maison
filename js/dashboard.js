@@ -1,0 +1,327 @@
+(function () {
+  "use strict";
+  const app = document.getElementById("app");
+  const NS = "http://www.w3.org/2000/svg";
+  const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
+  const NAV = [
+    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["favoris", "Favoris", "Favoris", "heart"],
+    ["messages", "Messagerie", "Messages", "chat"], ["notifications", "Notifications", "Alertes", "bell"], ["profil", "Mon profil", "Profil", "user"]
+  ];
+  const ICON = {
+    home: "M3 11l9-8 9 8|M5 10v10h5v-6h4v6h5V10", list: "M8 6h13|M8 12h13|M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01",
+    heart: "M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z", chat: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+    bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9|M13.7 21a2 2 0 0 1-3.4 0", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
+  };
+
+  let me = null, view = "apercu", orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
+  let unreadNotes = 0, filter = "all", active = null, lastId = 0, pollT = null, countT = null, toastEl = null;
+
+  // ---------- Outils ----------
+  function h(tag, attrs, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else if (v === true) el.setAttribute(k, "");
+      else if (v !== false && v != null) el.setAttribute(k, v);
+    }
+    kids.flat().forEach((c) => { if (c !== false && c != null) el.append(c instanceof Node ? c : document.createTextNode(c)); });
+    return el;
+  }
+  function icon(name) {
+    const s = document.createElementNS(NS, "svg");
+    s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true");
+    for (const d of ICON[name].split("|")) { const p = document.createElementNS(NS, "path"); p.setAttribute("d", d); s.append(p); }
+    return s;
+  }
+  async function api(path, method = "GET", body) {
+    const r = await fetch(path, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401 && me && !path.includes("a=login")) { me = null; showLogin("Votre session a expiré, reconnectez-vous."); }
+    if (!r.ok) throw new Error(data.error || "Erreur " + r.status);
+    return data;
+  }
+  const money = (a, c) => new Intl.NumberFormat("fr-FR").format(Number(a) || 0) + " " + (c || "");
+  const fmtDate = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  const fmtTime = (d) => new Date(d).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const msgUnread = () => threads.reduce((s, t) => s + (t.unread || 0), 0);
+  function toast(msg) {
+    if (!toastEl) { toastEl = h("div", { class: "toast", role: "status", hidden: true }); document.body.append(toastEl); }
+    toastEl.textContent = msg; toastEl.hidden = false;
+    clearTimeout(toast.t); toast.t = setTimeout(() => (toastEl.hidden = true), 5000);
+  }
+  const field = (label, input) => h("label", { class: "field" }, h("span", {}, label), input);
+  const empty = (text, btn) => h("div", { class: "empty" }, h("span", {}, text), btn || "");
+  const readFavs = () => { try { const a = JSON.parse(localStorage.getItem("maison-favorites") || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+
+  // ---------- Données ----------
+  async function loadData() {
+    const [o, n, t, c] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config")]);
+    if (o.status === "fulfilled") orders = o.value;
+    if (n.status === "fulfilled") { notes = n.value; unreadNotes = notes.filter((x) => !x.is_read).length; }
+    if (t.status === "fulfilled") threads = t.value;
+    if (c.status === "fulfilled") payCfg = c.value;
+  }
+  async function reloadOrders() { try { orders = await api("/api/orders"); } catch (e) { toast(e.message); } }
+
+  // ---------- Navigation ----------
+  function navBtns(tab) {
+    return NAV.map(([id, label, short, ic]) => {
+      const n = id === "messages" ? msgUnread() : id === "notifications" ? unreadNotes : 0;
+      return h("button", { type: "button", class: id === view ? "on" : "", "aria-current": id === view ? "page" : null, onclick: () => go(id) },
+        icon(ic), tab ? short : label, n ? h("span", { class: "badge" }, n > 99 ? "99+" : String(n)) : "");
+    });
+  }
+  function refreshNav() {
+    const nav = app.querySelector(".nav"), tab = app.querySelector(".tabbar");
+    if (nav) nav.replaceChildren(...navBtns(false));
+    if (tab) tab.replaceChildren(...navBtns(true));
+  }
+  function go(id) {
+    view = id; history.replaceState(null, "", "#" + id);
+    window.scrollTo(0, 0); render();
+  }
+  function stopPoll() { clearInterval(pollT); pollT = null; }
+  async function logout() {
+    try { await api("/api/customer?a=logout", "POST"); } catch (e) { /* ignore */ }
+    me = null; clearInterval(countT); stopPoll(); showLogin("Vous êtes déconnecté.");
+  }
+
+  // ---------- Pages ----------
+  function brand() { return h("a", { class: "brand", href: "/" }, h("b", {}, "M"), h("span", {}, "maison.")); }
+
+  async function render() {
+    stopPoll();
+    const title = NAV.find((n) => n[0] === view)[1];
+    const content = h("div", { class: "content" });
+    app.className = "dash";
+    app.replaceChildren(
+      h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
+        h("div", { class: "side-user" }, h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email)),
+          h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
+      h("div", { class: "main" },
+        h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
+      h("nav", { class: "tabbar", "aria-label": "Navigation mobile" }, navBtns(true)));
+    content.append(VIEWS[view]());
+  }
+
+  function overview() {
+    const first = me.name.split(" ")[0];
+    const pending = orders.filter((o) => o.status === "pending").length, accepted = orders.filter((o) => o.status === "confirmed").length;
+    const due = {};
+    orders.filter((o) => o.status === "confirmed" && Number(o.amount) > 0 && !["paid", "cash_pending"].includes(o.payment_status)).forEach((o) => { due[o.currency] = (due[o.currency] || 0) + Number(o.amount); });
+    const dueTxt = Object.entries(due).map(([c, a]) => money(a, c)).join(" + ");
+    const kpi = (label, val, sub, small) => h("div", { class: "card kpi" }, h("span", {}, label), h("strong", { class: small ? "sm" : "" }, val), h("em", {}, sub));
+    return h("div", { class: "content-inner", style: "display:grid;gap:20px;min-width:0" },
+      h("div", { class: "card hero" }, h("div", {}, h("h2", {}, "Bonjour " + first + " 👋"), h("p", {}, "Suivez vos demandes, vos paiements et vos échanges avec notre équipe.")),
+        h("div", { class: "btns" }, h("a", { class: "btn light", href: "/acheter" }, "Parcourir les biens"), h("button", { class: "btn lightghost", type: "button", onclick: () => go("messages") }, "Contacter le support"))),
+      h("div", { class: "kpis" },
+        kpi("Demandes en attente", String(pending), pending ? "En cours d’examen" : "Aucune en attente"),
+        kpi("Demandes acceptées", String(accepted), accepted ? "Bravo !" : "Pas encore"),
+        kpi("Acompte à régler", dueTxt || "Aucun", dueTxt ? "Pour confirmer la réservation" : "Rien à payer", true),
+        kpi("Messages non lus", String(msgUnread()), "Messagerie")),
+      h("div", { class: "grid2" },
+        h("div", { class: "card" }, h("h2", {}, "Dernières demandes"),
+          orders.length ? h("div", { class: "list" }, orders.slice(0, 4).map((o) => h("div", { class: "item" }, h("div", {}, h("strong", {}, o.property_title || "Bien supprimé"), h("small", { class: "muted" }, fmtDate(o.created_at))), h("span", { class: "pill " + o.status }, ST[o.status] || o.status))))
+            : empty("Vous n’avez pas encore fait de demande.", h("a", { class: "btn sm", href: "/acheter" }, "Trouver un bien")),
+          orders.length ? h("p", {}, h("button", { class: "btn ghost sm", type: "button", onclick: () => go("demandes") }, "Voir toutes les demandes")) : ""),
+        h("div", { class: "card" }, h("h2", {}, "Notifications récentes"),
+          notes.length ? h("div", { class: "list" }, notes.slice(0, 4).map((n) => h("div", { class: "item" + (n.is_read ? "" : " new") }, h("div", {}, n.text, h("br"), h("small", { class: "muted" }, fmtTime(n.created_at))))))
+            : empty("Aucune notification pour le moment."),
+          notes.length ? h("p", {}, h("button", { class: "btn ghost sm", type: "button", onclick: () => go("notifications") }, "Tout voir")) : "")));
+  }
+
+  async function pay(kind, o, btn, errEl) {
+    btn.disabled = true; errEl.textContent = "";
+    try {
+      const r = await api("/api/pay?a=" + kind, "POST", { orderId: o.id });
+      if (r.link) { window.location.href = r.link; return; }
+      toast("Paiement en espèces enregistré : réglez-le à l’agence.");
+      await reloadOrders(); render();
+    } catch (x) { errEl.textContent = x.message; btn.disabled = false; }
+  }
+  function payBlock(o) {
+    if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
+    const err = h("p", { class: "err", role: "alert" });
+    const box = h("div", { class: "paybox" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
+    if (o.payment_status === "paid") box.append(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
+    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, "Paiement en espèces à régler à l’agence."));
+    else {
+      if (o.payment_status === "pending") box.append(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
+      box.append(h("div", { class: "row" },
+        h("button", { class: "btn", type: "button", disabled: !payCfg.online, title: payCfg.online ? "" : "Paiement en ligne bientôt disponible", onclick: (e) => pay("online", o, e.currentTarget, err) }, "Payer en ligne (Mobile Money, carte)"),
+        h("button", { class: "btn ghost", type: "button", onclick: (e) => pay("cash", o, e.currentTarget, err) }, "Payer en espèces à l’agence")));
+      if (!payCfg.online) box.append(h("small", { class: "muted" }, "Le paiement en ligne n’est pas encore activé."));
+    }
+    box.append(err); return box;
+  }
+  function requests() {
+    const groups = { all: () => true, pending: (o) => o.status === "pending", confirmed: (o) => o.status === "confirmed", closed: (o) => ["rejected", "cancelled"].includes(o.status) };
+    const labels = { all: "Toutes", pending: "En attente", confirmed: "Acceptées", closed: "Refusées / annulées" };
+    const rows = orders.filter(groups[filter]);
+    return h("div", { style: "display:grid;gap:16px;min-width:0" },
+      h("div", { class: "chips" }, Object.keys(labels).map((k) => h("button", { type: "button", class: "chip" + (k === filter ? " on" : ""), onclick: () => { filter = k; render(); } }, labels[k] + " (" + orders.filter(groups[k]).length + ")"))),
+      rows.length ? rows.map((o) => h("div", { class: "card order" },
+        h("div", { class: "order-head" }, h("div", {}, h("strong", {}, o.property_title || "Bien supprimé"), h("br"), h("small", { class: "muted" }, "Demande du " + fmtDate(o.created_at))), h("span", { class: "pill " + o.status }, ST[o.status] || o.status)),
+        o.message ? h("div", { class: "muted" }, "« " + o.message + " »") : "",
+        payBlock(o),
+        o.status === "pending" ? h("div", {}, h("button", { class: "btn ghost sm", type: "button", onclick: async () => {
+          if (!confirm("Annuler cette demande ?")) return;
+          try { await api("/api/orders?id=" + o.id, "DELETE"); await reloadOrders(); render(); } catch (x) { toast(x.message); }
+        } }, "Annuler la demande")) : ""))
+        : h("div", { class: "card" }, empty(orders.length ? "Aucune demande dans cette catégorie." : "Vous n’avez pas encore fait de demande.", h("a", { class: "btn sm", href: "/acheter" }, "Parcourir les biens"))));
+  }
+
+  function favorites() {
+    const ids = readFavs(), box = h("div", { style: "display:grid;gap:16px;min-width:0" });
+    if (!ids.length) { box.append(h("div", { class: "card" }, empty("Vous n’avez pas encore de favori. Cliquez sur le cœur d’une annonce pour la retrouver ici.", h("a", { class: "btn sm", href: "/acheter" }, "Parcourir les biens")))); return box; }
+    box.append(h("div", { class: "card" }, "Chargement de vos favoris…"));
+    const draw = () => {
+      const list = (props || []).filter((p) => ids.includes(p.id));
+      if (!list.length) { box.replaceChildren(h("div", { class: "card" }, empty("Vos favoris ne sont plus disponibles."))); return; }
+      box.replaceChildren(h("div", { class: "props" }, list.map((p) => {
+        const sym = p.currencySymbol || p.currency || "";
+        const url = /rent|loc|louer/i.test(p.operation || "") ? "/louer" : "/acheter";
+        return h("div", { class: "card prop" }, h("img", { src: p.image, alt: p.alt || p.title, loading: "lazy" }),
+          h("div", {}, h("strong", {}, p.title), h("small", { class: "muted" }, p.location),
+            h("span", { class: "price" }, new Intl.NumberFormat("fr-FR").format(p.price) + " " + sym + (p.priceSuffix || "")),
+            h("small", { class: "muted" }, [p.rooms ? p.rooms + " pièces" : "", p.bedrooms ? p.bedrooms + " ch." : "", p.area ? p.area + " m²" : ""].filter(Boolean).join(" · ")),
+            (p.availability && p.availability !== "available") ? h("span", { class: "pill" }, p.availability === "reserved" ? "Réservé" : "Indisponible") : "",
+            h("div", { class: "row" }, h("a", { class: "btn sm", href: url }, "Voir les annonces"),
+              h("button", { class: "btn ghost sm", type: "button", onclick: () => { try { localStorage.setItem("maison-favorites", JSON.stringify(readFavs().filter((x) => x !== p.id))); } catch (e) { /* ignore */ } render(); } }, "Retirer"))));
+      })));
+    };
+    if (props) draw(); else api("/api/properties").then((r) => { props = Array.isArray(r) ? r : []; draw(); }).catch(() => box.replaceChildren(h("div", { class: "card" }, h("p", { class: "err" }, "Impossible de charger vos favoris."))));
+    return box;
+  }
+
+  // ---------- Messagerie ----------
+  function messaging() {
+    const isMobile = () => window.matchMedia("(max-width: 1023px)").matches;
+    const wrap = h("div", { class: "card chat" }), list = h("div", { class: "threads-list" }), msgs = h("div", { class: "msgs" });
+    const title = h("span", {}, ""), input = h("textarea", { rows: 1, placeholder: "Écrivez votre message…", maxlength: 2000, "aria-label": "Votre message" });
+    const emailIn = h("input", { type: "email", placeholder: "E-mail d’un autre client", "aria-label": "E-mail du client" }), nerr = h("p", { class: "err" });
+    const sendBtn = h("button", { class: "btn", type: "button" }, "Envoyer");
+
+    const drawThreads = () => list.replaceChildren(...(threads.length ? threads.map((t) => h("button", { type: "button", class: "thread" + (t.id === active ? " on" : ""), onclick: () => openThread(t) },
+      h("div", { class: "t" }, h("span", {}, t.title || "Conversation"), t.unread ? h("span", { class: "badge" }, String(t.unread)) : ""), h("div", { class: "l" }, t.last_body || "Aucun message")))
+      : [h("p", { class: "muted", style: "padding:16px" }, "Aucune conversation.")]));
+    const addMsgs = (rows, first) => {
+      const near = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
+      if (first) msgs.replaceChildren();
+      rows.forEach((m) => msgs.append(h("div", { class: "msg" + (m.mine ? " mine" : "") }, m.body, h("small", {}, (m.mine ? "" : m.who + " · ") + fmtTime(m.created_at)))));
+      if (rows.length) lastId = rows[rows.length - 1].id;
+      if (first && !rows.length) msgs.append(h("div", { class: "conv-empty" }, "Aucun message pour l’instant. Écrivez le premier !"));
+      if (rows.length && !first) msgs.querySelector(".conv-empty")?.remove();
+      if (first || near) msgs.scrollTop = msgs.scrollHeight;
+    };
+    async function loadMsgs(first) {
+      if (!active) return;
+      try { const rows = await api(`/api/chat?a=messages&thread=${active}&after=${first ? 0 : lastId}`); addMsgs(rows, first); if (rows.length) { const t = threads.find((x) => x.id === active); if (t) { t.unread = 0; drawThreads(); refreshNav(); } } }
+      catch (e) { if (first) msgs.replaceChildren(h("div", { class: "conv-empty" }, e.message)); }
+    }
+    function openThread(t) {
+      active = t.id; lastId = 0; title.textContent = t.title || "Conversation"; wrap.classList.add("open"); drawThreads(); loadMsgs(true); input.focus({ preventScroll: true });
+    }
+    async function send() {
+      const body = input.value.trim(); if (!body || !active) return;
+      sendBtn.disabled = true;
+      try { await api("/api/chat?a=send", "POST", { thread: active, body }); input.value = ""; input.style.height = "auto"; await loadMsgs(false); }
+      catch (e) { toast(e.message); } finally { sendBtn.disabled = false; }
+    }
+    sendBtn.addEventListener("click", send);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+    input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 120) + "px"; });
+    const startBtn = h("button", { class: "btn ghost sm", type: "button", onclick: async () => {
+      nerr.textContent = "";
+      try { const r = await api("/api/chat?a=start", "POST", { email: emailIn.value }); emailIn.value = ""; threads = await api("/api/chat?a=threads"); openThread(threads.find((t) => t.id === r.id) || { id: r.id, title: r.title }); }
+      catch (e) { nerr.textContent = e.message; }
+    } }, "Démarrer");
+
+    wrap.append(
+      h("div", { class: "threads" }, list, h("div", { class: "newchat" }, h("small", { class: "muted" }, "Écrire à un autre client"), emailIn, startBtn, nerr)),
+      h("div", { class: "conv" }, h("div", { class: "conv-head" }, h("button", { class: "btn ghost sm back", type: "button", onclick: () => wrap.classList.remove("open") }, "← Retour"), title), msgs,
+        h("div", { class: "composer" }, input, sendBtn)));
+    drawThreads();
+    msgs.append(h("div", { class: "conv-empty" }, "Sélectionnez une conversation."));
+    const support = threads.find((t) => t.kind === "support");
+    if (active && threads.some((t) => t.id === active)) openThread(threads.find((t) => t.id === active));
+    else if (support && !isMobile()) openThread(support);
+    let tick = 0;
+    pollT = setInterval(async () => {
+      if (document.visibilityState !== "visible") return;
+      loadMsgs(false);
+      if (++tick % 3 === 0) { try { const t = await api("/api/chat?a=threads"); threads = t; drawThreads(); refreshNav(); } catch (e) { /* ignore */ } }
+    }, 6000);
+    return wrap;
+  }
+
+  // ---------- Notifications ----------
+  function notifications() {
+    const hadUnread = notes.some((n) => !n.is_read), box = h("div", { class: "card" });
+    box.append(h("h2", {}, "Notifications"), notes.length ? h("div", { class: "list" }, notes.map((n) => h("div", { class: "item" + (n.is_read ? "" : " new") }, h("div", {}, n.text, h("br"), h("small", { class: "muted" }, fmtTime(n.created_at))))))
+      : empty("Aucune notification pour le moment."));
+    if (hadUnread) api("/api/customer?a=notifications", "POST").then(() => { unreadNotes = 0; notes.forEach((n) => (n.is_read = true)); refreshNav(); }).catch(() => {});
+    return box;
+  }
+
+  // ---------- Profil ----------
+  function profile() {
+    const name = h("input", { type: "text", value: me.name, maxlength: 100, autocomplete: "name", required: true }), phone = h("input", { type: "tel", value: me.phone || "", maxlength: 30, autocomplete: "tel" });
+    const perr = h("p", { class: "err", role: "alert" }), pbtn = h("button", { class: "btn", type: "submit" }, "Enregistrer");
+    const cur = h("input", { type: "password", autocomplete: "current-password", required: true }), n1 = h("input", { type: "password", autocomplete: "new-password", minlength: 8, required: true }), n2 = h("input", { type: "password", autocomplete: "new-password", minlength: 8, required: true });
+    const serr = h("p", { class: "err", role: "alert" }), sbtn = h("button", { class: "btn", type: "submit" }, "Changer le mot de passe");
+    return h("div", { style: "display:grid;gap:20px;min-width:0" },
+      h("div", { class: "card" }, h("h2", {}, "Informations personnelles"), h("form", { class: "form", onsubmit: async (e) => {
+        e.preventDefault(); perr.textContent = ""; pbtn.disabled = true;
+        try { const r = await api("/api/customer?a=profile", "POST", { name: name.value, phone: phone.value }); me = Object.assign(me, r.customer); toast("Profil mis à jour."); render(); }
+        catch (x) { perr.textContent = x.message; pbtn.disabled = false; }
+      } }, field("Nom complet", name), field("E-mail (non modifiable)", h("input", { type: "email", value: me.email, readonly: true })), field("Téléphone", phone), perr, pbtn)),
+      h("div", { class: "card" }, h("h2", {}, "Mot de passe"), h("form", { class: "form", onsubmit: async (e) => {
+        e.preventDefault(); serr.textContent = "";
+        if (n1.value !== n2.value) { serr.textContent = "Les deux nouveaux mots de passe ne correspondent pas."; return; }
+        sbtn.disabled = true;
+        try { await api("/api/customer?a=password", "POST", { current: cur.value, password: n1.value }); cur.value = n1.value = n2.value = ""; toast("Mot de passe modifié."); }
+        catch (x) { serr.textContent = x.message; } finally { sbtn.disabled = false; }
+      } }, field("Mot de passe actuel", cur), field("Nouveau mot de passe (8 caractères minimum)", n1), field("Confirmer le nouveau mot de passe", n2), serr, sbtn)),
+      h("div", { class: "card" }, h("h2", {}, "Session"), h("p", { class: "muted" }, "Vous êtes connecté en tant que " + me.email + "."), h("button", { class: "btn danger", type: "button", onclick: logout }, "Se déconnecter")));
+  }
+
+  const VIEWS = { apercu: overview, demandes: requests, favoris: favorites, messages: messaging, notifications, profil: profile };
+
+  // ---------- Connexion ----------
+  function showLogin(note) {
+    stopPoll(); clearInterval(countT); app.className = "boot";
+    const email = h("input", { type: "email", autocomplete: "email", required: true }), pw = h("input", { type: "password", autocomplete: "current-password", required: true });
+    const err = h("p", { class: "err", role: "alert" }, ""), btn = h("button", { class: "btn", type: "submit" }, "Se connecter");
+    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Connexion à votre espace"), note ? h("p", { class: "muted" }, note) : "",
+      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
+        e.preventDefault(); err.textContent = ""; btn.disabled = true;
+        try { const r = await api("/api/customer?a=login", "POST", { email: email.value, password: pw.value }); me = r.customer; await start(); }
+        catch (x) { err.textContent = x.message; btn.disabled = false; }
+      } }, field("E-mail", email), field("Mot de passe", pw), err, btn)),
+      h("p", { class: "muted" }, "Pas encore de compte ? ", h("a", { href: "/" }, "Retour au site"), " puis « Se connecter » → « Créer un compte ».")));
+  }
+
+  async function start() {
+    const hash = location.hash.slice(1);
+    view = VIEWS[hash] ? hash : "apercu";
+    await loadData();
+    const q = new URLSearchParams(location.search).get("paiement");
+    if (q) {
+      history.replaceState(null, "", "/compte#demandes"); view = "demandes";
+      toast(q === "ok" ? "Paiement reçu, merci !" : q === "annule" ? "Paiement annulé." : q === "attente" ? "Paiement en cours de confirmation." : "Le paiement n’a pas abouti.");
+    }
+    await render();
+    clearInterval(countT);
+    countT = setInterval(async () => {
+      if (document.visibilityState !== "visible" || !me || view === "messages") return;
+      try {
+        const [m, t] = await Promise.all([api("/api/customer?a=me"), api("/api/chat?a=threads")]);
+        unreadNotes = m.unread; threads = t; refreshNav();
+      } catch (e) { /* ignore */ }
+    }, 30000);
+  }
+
+  window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (me && VIEWS[id] && id !== view) { view = id; render(); } });
+  api("/api/customer?a=me").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
+})();

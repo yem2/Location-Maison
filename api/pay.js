@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer } from "./_lib.js";
+import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer, wrap } from "./_lib.js";
 
 const FLW = "https://api.flutterwave.com/v3";
 const key = () => process.env.FLW_SECRET_KEY;
@@ -31,7 +31,7 @@ async function settle(txRef) {
   return "pending";
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
 
   if (a === "config") return send(res, 200, { online: !!key(), cash: true });
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
     let result = "echec";
     if (req.query.status === "cancelled") result = "annule";
     else if (ref && key()) result = (await settle(ref)) === "paid" ? "ok" : "attente";
-    res.setHeader("Location", `/?paiement=${result}`);
+    res.setHeader("Location", `/compte?paiement=${result}`);
     return res.status(302).end();
   }
 
@@ -106,3 +106,5 @@ export default async function handler(req, res) {
   }
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("pay", handler);

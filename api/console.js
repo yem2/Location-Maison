@@ -1,6 +1,6 @@
-import { sql, send, requireUser, audit } from "./_lib.js";
+import { sql, send, requireUser, audit, wrap } from "./_lib.js";
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const me = await requireUser(req, res);
   if (!me) return;
   const a = req.query.a;
@@ -42,3 +42,5 @@ export default async function handler(req, res) {
   }
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("console", handler);

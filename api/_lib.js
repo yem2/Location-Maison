@@ -121,3 +121,45 @@ export async function throttle(req, res, key, max, windowSec) {
   await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
   return true;
 }
+
+// ---------- Supervision : adresse IP et journal des appels d'API ----------
+export const clientIp = (req) =>
+  String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "").trim().slice(0, 64);
+
+const eventKind = (status, ms, thrown, action) => {
+  if (thrown || status >= 500) return "error";
+  if (status === 401 && action === "me") return null;            // visiteur non connecté : normal
+  if (status === 401 || status === 403 || status === 429) return "security";
+  if (status === 404 || status === 405) return "contract";
+  if (status === 400 || status === 422) return "validation";
+  if (ms > 2000) return "slow";
+  return null;
+};
+
+// Enveloppe un gestionnaire d'API : mesure la durée, attrape les erreurs (réponse 500 propre)
+// et alimente les tables api_stats / app_events. L'enregistrement ne doit jamais casser la requête.
+export function wrap(name, handler) {
+  return async function wrapped(req, res) {
+    const t0 = Date.now();
+    let thrown = null;
+    try { await handler(req, res); }
+    catch (e) {
+      thrown = e;
+      console.error(`[${name}]`, e);
+      if (!res.headersSent) res.status(500).json({ error: "Erreur serveur" });
+    }
+    try {
+      const ms = Date.now() - t0, status = res.statusCode || 200;
+      const cls = Math.floor(status / 100) + "xx";
+      await sql`INSERT INTO api_stats (day, api, class, n, ms) VALUES (current_date, ${name}, ${cls}, 1, ${ms})
+        ON CONFLICT (day, api, class) DO UPDATE SET n = api_stats.n + 1, ms = api_stats.ms + EXCLUDED.ms`;
+      const action = typeof req.query?.a === "string" ? req.query.a.slice(0, 40) : "";
+      const kind = eventKind(status, ms, thrown, action);
+      if (kind) {
+        const detail = thrown ? String(thrown.message || thrown).slice(0, 300) : "";
+        await sql`INSERT INTO app_events (kind, api, action, method, status, ms, ip, detail)
+          VALUES (${kind}, ${name}, ${action}, ${req.method}, ${status}, ${ms}, ${clientIp(req)}, ${detail})`;
+      }
+    } catch { /* journal indisponible (tables non migrées) : on ignore */ }
+  };
+}

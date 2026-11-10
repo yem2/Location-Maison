@@ -4,6 +4,12 @@
    en "hamburger" dès la tablette.
    ============================================================ */
 
+/* --- En-tête : jamais de texte coupé sur plusieurs lignes ------ */
+.site-header { flex-wrap: nowrap; }
+.brand, .main-nav a, .header-cta, .account-btn { white-space: nowrap; }
+.main-nav { flex-wrap: nowrap; }
+.header-cta { flex: 0 0 auto; }
+
 /* --- Socle : rien ne doit jamais dépasser de l'écran --------- */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body { overflow-x: clip; }
@@ -14,8 +20,8 @@ input[type="range"] { width: 100%; }
 .comparison-table, table { max-width: 100%; }
 .compare-content, .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
-/* --- Tablette et plus petit (≤ 1024 px) : menu hamburger ----- */
-@media (max-width: 1024px) {
+/* --- Tablette, petit PC (≤ 1180 px) : menu hamburger ---------- */
+@media (max-width: 1180px) {
   .site-header { gap: 8px; padding-left: 5%; padding-right: 5%; }
   .menu-toggle {
     display: grid; order: 3; flex: 0 0 auto;

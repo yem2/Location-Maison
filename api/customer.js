@@ -1,8 +1,8 @@
-import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, str, emailOk } from "./_lib.js";
+import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, str, emailOk, wrap } from "./_lib.js";
 
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
 
   if (a === "me") {
@@ -35,6 +35,28 @@ export default async function handler(req, res) {
     if (!p) return send(res, 200, { ok: true });
     const recent = await sql`SELECT 1 FROM activity WHERE customer_id = ${c.id} AND property_id = ${pid} AND action = 'view_property' AND created_at > now() - interval '10 minutes'`;
     if (!recent.length) await logActivity(c.id, "view_property", pid, p.title);
+    return send(res, 200, { ok: true });
+  }
+
+  if (a === "profile") {
+    const c = await requireCustomer(req, res);
+    if (!c) return;
+    const name = str(b.name, 100), phone = str(b.phone, 30);
+    if (!name) return send(res, 400, { error: "Le nom est obligatoire." });
+    await sql`UPDATE customers SET name = ${name}, phone = ${phone} WHERE id = ${c.id}`;
+    return send(res, 200, { customer: { id: c.id, name, email: c.email, phone } });
+  }
+
+  if (a === "password") {
+    const c = await requireCustomer(req, res);
+    if (!c) return;
+    if (!(await throttle(req, res, "cpass", 8, 900))) return;
+    const cur = typeof b.current === "string" ? b.current.slice(0, 200) : "", pw = typeof b.password === "string" ? b.password : "";
+    if (pw.length < 8 || pw.length > 200) return send(res, 400, { error: "Le nouveau mot de passe doit contenir au moins 8 caractères." });
+    const [u] = await sql`SELECT password_hash FROM customers WHERE id = ${c.id}`;
+    if (!u || !verifyPassword(cur, u.password_hash)) return send(res, 401, { error: "Mot de passe actuel incorrect." });
+    await sql`UPDATE customers SET password_hash = ${hashPassword(pw)} WHERE id = ${c.id}`;
+    await logActivity(c.id, "password_change");
     return send(res, 200, { ok: true });
   }
 
@@ -78,3 +100,5 @@ export default async function handler(req, res) {
 
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("customer", handler);

@@ -143,7 +143,7 @@
     dlg = h("dialog", { class: "acc-dialog", "aria-label": "Mon compte" }, box);
     dlg.addEventListener("click", (e) => { if (e.target === dlg) close(); });
     toastEl = h("div", { class: "acc-toast", role: "status", hidden: true });
-    btn = h("button", { type: "button", class: "account-btn", onclick: () => open(customer ? "account" : "login") }, "Se connecter");
+    btn = h("button", { type: "button", class: "account-btn", onclick: () => { if (customer) location.href = "/compte"; else open("login"); } }, "Se connecter");
     const cta = document.querySelector(".header-cta");
     if (cta) cta.before(btn); else (document.querySelector(".site-header") || document.body).append(btn);
     document.body.append(dlg, toastEl);

@@ -1,8 +1,8 @@
-import { sql, send, throttle, verifyPassword, createSession, destroySession, currentUser, sameOrigin, audit, str } from "./_lib.js";
+import { sql, send, throttle, verifyPassword, createSession, destroySession, currentUser, sameOrigin, audit, str, wrap } from "./_lib.js";
 
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
   if (a === "me") {
     const u = await currentUser(req);
@@ -31,3 +31,5 @@ export default async function handler(req, res) {
   await audit(user.id, "login");
   send(res, 200, { user: { id: user.id, email: user.email, name: user.name, role: user.role } });
 }
+
+export default wrap("auth", handler);

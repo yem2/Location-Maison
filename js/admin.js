@@ -195,9 +195,9 @@
     try { counts = await api("/api/console?a=counts"); } catch (e) {}
     const sup = me.role === "super_admin";
     const tabs = h("div", { class: "tabs" }, t("annonces", "Annonces"), t("orders", "Commandes" + (counts.pendingOrders ? " (" + counts.pendingOrders + ")" : "")),
-      t("notifs", "Notifications" + (counts.notifications ? " (" + counts.notifications + ")" : "")), t("messages", "Messages"),
-      sup ? t("clients", "Clients") : "", sup ? t("activity", "Activité") : "", sup ? t("admins", "Administrateurs") : "");
-    const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" ? await adminsView()
+      t("notifs", "Notifications" + (counts.notifications ? " (" + counts.notifications + ")" : "")), t("messages", "Messages"), t("support", "Support"),
+      sup ? t("clients", "Clients") : "", sup ? t("activity", "Activité") : "", sup ? t("admins", "Administrateurs") : "", sup ? t("supervision", "Supervision") : "");
+    const body = tab === "support" ? await window.AdminExtra.supportView() : tab === "supervision" && sup ? await window.AdminExtra.supervisionView() : tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView() : listView();
     app.replaceChildren(
       h("div", { class: "top" }, h("div", {}, h("h1", {}, "Administration"), h("span", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur"))),
