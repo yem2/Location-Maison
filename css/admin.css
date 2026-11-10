@@ -40,3 +40,7 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 .msg.mine{align-self:flex-end;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}.msg small{display:block;opacity:.7;font-size:.7rem}
 .send{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}.send input{flex:1}.send button{width:auto}
 @media (max-width:860px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow-x:auto;gap:2px;padding:8px}.brand,.grp,.who{display:none}.nav{white-space:nowrap;width:auto}.two{grid-template-columns:1fr}.chat{grid-template-columns:1fr;height:auto}.chat-list{max-height:220px}.msgs{min-height:260px;max-height:50vh}.content,.top{padding-left:14px;padding-right:14px}}
+
+.tbl{width:100%;border-collapse:collapse;font-size:.85rem}.tbl th{text-align:left;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+.tabs-in{display:flex;gap:6px;flex-wrap:wrap}

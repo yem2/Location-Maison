@@ -1,4 +1,4 @@
-import { sql, send, throttle, requireCustomer, requireUser, notifyAdmins, notifyCustomer, str } from "./_lib.js";
+import { sql, send, throttle, requireCustomer, requireUser, notifyAdmins, notifyCustomer, str , wrap } from "./_lib.js";
 
 const snippet = (s) => String(s).replace(/\s+/g, " ").slice(0, 90);
 
@@ -8,7 +8,7 @@ async function supportThread(customerId) {
   return t;
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
 
   // ================= Espace administrateur =================
@@ -110,3 +110,5 @@ export default async function handler(req, res) {
   }
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("chat", handler);

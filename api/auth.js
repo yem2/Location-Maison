@@ -1,8 +1,8 @@
-import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone } from "./_lib.js";
+import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone , wrap } from "./_lib.js";
 
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
   if (a === "me") {
     const u = await currentUser(req);
@@ -80,3 +80,5 @@ export default async function handler(req, res) {
   }
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("auth", handler);

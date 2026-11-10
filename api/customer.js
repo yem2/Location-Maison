@@ -1,8 +1,8 @@
-import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk } from "./_lib.js";
+import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk , wrap } from "./_lib.js";
 
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const a = req.query.a;
 
   if (a === "me") {
@@ -114,3 +114,5 @@ export default async function handler(req, res) {
 
   send(res, 404, { error: "Inconnu" });
 }
+
+export default wrap("customer", handler);

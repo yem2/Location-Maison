@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, str, notifyCustomer } from "./_lib.js";
+import { sql, send, requireUser, audit, str, notifyCustomer , wrap } from "./_lib.js";
 
 const toFront = (r) => ({
   id: r.id, title: r.title, location: r.location, price: Number(r.price), currency: r.currency,
@@ -30,7 +30,7 @@ function clean(b) {
   return { p };
 }
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   if (req.method === "GET") {
     const all = req.query.all === "1" && (await requireUser(req, res));
     if (req.query.all === "1" && !all) return;
@@ -72,3 +72,5 @@ export default async function handler(req, res) {
   await audit(user.id, "property.update", id);
   send(res, 200, { ok: true });
 }
+
+export default wrap("properties", handler);

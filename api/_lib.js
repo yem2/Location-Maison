@@ -209,3 +209,34 @@ export async function throttle(req, res, key, max, windowSec) {
   await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
   return true;
 }
+
+// ---------- Supervision : journal automatique de toutes les API ----------
+export const clientIp = (req) => String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "").trim().slice(0, 64);
+
+async function record(name, req, status, ms, err) {
+  if (name === "image" && status < 400) return; // trop de volume
+  const cls = `${Math.floor(status / 100)}xx`;
+  await sql`INSERT INTO api_stats (day, api, class, n, ms) VALUES (current_date, ${name}, ${cls}, 1, ${ms})
+    ON CONFLICT (day, api, class) DO UPDATE SET n = api_stats.n + 1, ms = api_stats.ms + ${ms}`;
+  let kind = null;
+  if (err || status >= 500) kind = "error";
+  else if ([401, 403, 429].includes(status)) kind = "security";
+  else if ([404, 405].includes(status)) kind = "contract";
+  else if (status === 400) kind = "validation";
+  else if (ms > 2500) kind = "slow";
+  if (!kind) return;
+  const detail = err ? String(err.message || err).slice(0, 300) + " | " + String(err.stack || "").split("\n").slice(1, 3).join(" ").slice(0, 200) : "";
+  await sql`INSERT INTO app_events (kind, api, action, method, status, ms, ip, detail)
+    VALUES (${kind}, ${name}, ${String(req.query?.a || "").slice(0, 40)}, ${req.method || ""}, ${status}, ${ms}, ${clientIp(req)}, ${detail})`;
+}
+
+// Enveloppe une API : capture les exceptions (réponse 500 propre) et alimente la supervision
+export function wrap(name, fn) {
+  return async (req, res) => {
+    const t0 = Date.now();
+    let err = null;
+    try { await fn(req, res); }
+    catch (e) { err = e; if (!res.headersSent) res.status(500).json({ error: "Erreur interne. L’administrateur a été informé." }); }
+    try { await record(name, req, res.statusCode, Date.now() - t0, err); } catch { /* la supervision ne doit jamais casser l'API */ }
+  };
+}
