@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer, wrap } from "./_lib.js";
+import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer , wrap } from "./_lib.js";
 
 const FLW = "https://api.flutterwave.com/v3";
 const key = () => process.env.FLW_SECRET_KEY;
@@ -42,7 +42,7 @@ async function handler(req, res) {
     let result = "echec";
     if (req.query.status === "cancelled") result = "annule";
     else if (ref && key()) result = (await settle(ref)) === "paid" ? "ok" : "attente";
-    res.setHeader("Location", `/compte?paiement=${result}`);
+    res.setHeader("Location", `/?paiement=${result}`);
     return res.status(302).end();
   }
 

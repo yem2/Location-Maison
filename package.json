@@ -2,6 +2,10 @@
   "name": "site-immobilier",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
-  "dependencies": { "@neondatabase/serverless": "^1.0.0" }
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.2.0"
+  }
 }

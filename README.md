@@ -47,8 +47,3 @@ Les pages de vente et de location proposent la recherche multicritère, le tri p
 Dans les deux cas, ne déplacez pas `index.html` : les hébergeurs le servent comme page d’accueil. Bootstrap est chargé depuis jsDelivr, donc ses ressources nécessitent une connexion Internet.
 
 Le fichier `netlify.toml` configure déjà Netlify pour publier la racine du dépôt. Après avoir lié le dépôt GitHub à Netlify, chaque `push` sur la branche de production déclenche automatiquement une nouvelle publication. Sur GitHub Pages, activez Pages depuis la branche choisie dans les paramètres du dépôt ; les modifications envoyées sur cette branche seront publiées automatiquement.
-
-## Mise en place après mise à jour
-1. Neon (SQL Editor) : exécuter `migration-paiement.sql` puis `migration-v3.sql` (messagerie + supervision). Les deux sont relançables sans risque.
-2. Vercel : variables `FLW_SECRET_KEY`, `FLW_WEBHOOK_HASH` (paiement), `CRON_SECRET` (contrôle quotidien, `vercel.json` le planifie à 5 h UTC). Voir PAIEMENT.md et SUPERVISION.md.
-3. Pages : `/compte` = tableau de bord client (demandes, paiements, favoris, messagerie, notifications, profil) ; `/admin` = onglets Support et Supervision.

@@ -1,6 +1,6 @@
 (function () {
   const app = document.getElementById("app");
-  let me = null, props = [], tab = "annonces";
+  let me = null, props = [], tab = "dashboard";
   const SYM = { EUR: "€", USD: "$", XAF: "FCFA", MAD: "DH", CHF: "CHF", CAD: "CA$", GBP: "£", AED: "AED" };
 
   function h(tag, attrs, ...kids) {
@@ -17,7 +17,7 @@
     const r = await fetch(path, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
     if (r.status === 401 && me) { me = null; render(); }
-    if (!r.ok) throw new Error(data.error || "Erreur " + r.status);
+    if (!r.ok) { const e = new Error(data.error || "Erreur " + r.status); e.data = data; throw e; }
     return data;
   }
   const field = (label, input) => h("div", {}, h("label", {}, label), input);
@@ -25,7 +25,7 @@
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const ACT = { signup: "a créé son compte", login: "s’est connecté", view_property: "a consulté le bien", order: "a demandé une réservation", order_blocked: "a tenté de réserver un bien indisponible", order_cancel: "a annulé sa demande" };
   const AVL = { available: "Disponible", reserved: "Réservé", unavailable: "Indisponible" };
-  let counts = { notifications: 0, pendingOrders: 0 };
+  let counts = { notifications: 0, pendingOrders: 0, chat: 0, suggestions: 0 };
 
   // Réduit la photo (1600 px max, JPEG) avant l'envoi
   async function shrink(file) {
@@ -49,12 +49,14 @@
     const err = h("p", { class: "err", role: "alert" });
     const email = h("input", { type: "email", required: true, autocomplete: "username" });
     const pw = h("input", { type: "password", required: true, autocomplete: "current-password" });
+    const code = h("input", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8, placeholder: "123456" });
+    const codeBox = h("div", { hidden: true }, h("br"), field("Code de double authentification", code));
     const form = h("form", { class: "card login", onsubmit: async (e) => {
       e.preventDefault(); err.textContent = "";
-      try { me = (await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value })).user; await load(); render(); }
-      catch (x) { err.textContent = x.message; }
+      try { me = (await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value, code: code.value })).user; await load(); render(); }
+      catch (x) { err.textContent = x.message; if (x.data && x.data.needCode) { codeBox.hidden = false; code.focus(); } }
     } }, h("h1", {}, "Administration"), h("p", { class: "muted" }, "Connexion réservée aux administrateurs."),
-      field("E-mail", email), h("br"), field("Mot de passe", pw), err, h("button", { type: "submit" }, "Se connecter"));
+      field("E-mail", email), h("br"), field("Mot de passe", pw), codeBox, err, h("button", { type: "submit" }, "Se connecter"));
     return form;
   }
 
@@ -189,22 +191,272 @@
         h("span", { class: "muted" }, when(x.created_at))))]);
   }
 
-  async function render() {
-    if (!me) { app.replaceChildren(loginView()); return; }
-    const t = (id, label) => h("button", { class: id === tab || (tab === "form" && id === "annonces") ? "on" : "ghost", onclick: () => { tab = id; window._cust = null; render(); } }, label);
-    try { counts = await api("/api/console?a=counts"); } catch (e) {}
-    const sup = me.role === "super_admin";
-    const tabs = h("div", { class: "tabs" }, t("annonces", "Annonces"), t("orders", "Commandes" + (counts.pendingOrders ? " (" + counts.pendingOrders + ")" : "")),
-      t("notifs", "Notifications" + (counts.notifications ? " (" + counts.notifications + ")" : "")), t("messages", "Messages"), t("support", "Support"),
-      sup ? t("clients", "Clients") : "", sup ? t("activity", "Activité") : "", sup ? t("admins", "Administrateurs") : "", sup ? t("supervision", "Supervision") : "");
-    const body = tab === "support" ? await window.AdminExtra.supportView() : tab === "supervision" && sup ? await window.AdminExtra.supervisionView() : tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" ? await adminsView()
-      : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView() : listView();
-    app.replaceChildren(
-      h("div", { class: "top" }, h("div", {}, h("h1", {}, "Administration"), h("span", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur"))),
-        h("div", { class: "row" }, h("a", { class: "btn ghost", href: "/", style: "text-decoration:none;border:1px solid var(--line);color:var(--ink);background:transparent" }, "Voir le site"),
-          h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
-      tabs, body);
+  let pollTimer = null;
+  const stopPoll = () => { clearInterval(pollTimer); pollTimer = null; };
+  const nf = (n) => new Intl.NumberFormat("fr-FR").format(Math.round(n));
+  const snip = (s) => String(s || "").replace(/\s+/g, " ").slice(0, 70);
+
+  function svgEl(tag, attrs) { const e = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; }
+  function barChart(days) {
+    const W = 640, H = 190, pad = 24, max = Math.max(1, ...days.map((d) => Math.max(d.actions, d.orders)));
+    const s = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img", "aria-label": "Activité des 14 derniers jours" });
+    const bw = (W - pad * 2) / days.length;
+    s.append(svgEl("line", { x1: pad, y1: H - pad, x2: W - pad, y2: H - pad, stroke: "currentColor", opacity: ".2" }));
+    days.forEach((d, i) => {
+      const x = pad + i * bw, hA = (d.actions / max) * (H - pad * 2 - 6), hO = (d.orders / max) * (H - pad * 2 - 6);
+      s.append(svgEl("rect", { x: x + 3, y: H - pad - hA, width: bw / 2 - 4, height: hA, rx: 3, fill: "#4f46e5" }));
+      s.append(svgEl("rect", { x: x + bw / 2, y: H - pad - hO, width: bw / 2 - 4, height: hO, rx: 3, fill: "#f59e0b" }));
+      if (i % 2 === 0) { const tx = svgEl("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle", "font-size": 10, fill: "currentColor", opacity: ".6" }); tx.textContent = d.day; s.append(tx); }
+    });
+    return s;
+  }
+  const meter = (label, n, total) => h("div", {}, h("div", { class: "row" }, h("span", {}, label), h("strong", {}, String(n))), h("div", { class: "bar" }, h("i", { style: "width:" + (total ? (n / total) * 100 : 0) + "%" })));
+
+  function dashboardView() {
+    const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
+    api("/api/console?a=stats").then((s) => {
+      const kpi = (l, v, sub, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), sub ? h("div", { class: "kpi-s" }, sub) : "");
+      const rev = s.revenue.length ? s.revenue.map((r) => nf(r.total) + " " + r.currency).join(" · ") : "0";
+      box.replaceChildren(
+        me.role === "super_admin" && !me.totp_enabled ? h("div", { class: "banner" }, h("strong", {}, "Sécurité : "), "activez la double authentification pour protéger le compte super administrateur. ", h("button", { class: "ghost", onclick: () => { tab = "profile"; render(); } }, "Activer maintenant")) : "",
+        h("div", { class: "kpis" },
+          kpi("Annonces", s.properties.total, s.properties.available + " disponibles · " + s.properties.reserved + " réservées"),
+          kpi("Clients inscrits", s.customers.total, "+" + s.customers.week + " cette semaine"),
+          kpi("Demandes en attente", s.orders.pending, s.orders.confirmed + " acceptées", s.orders.pending > 0),
+          kpi("Acomptes encaissés", rev, s.orders.cash_pending + " espèces à encaisser"),
+          kpi("Messages non lus", counts.chat + s.messagesUnread, counts.chat + " chat · " + s.messagesUnread + " contact", counts.chat + s.messagesUnread > 0),
+          kpi("Suggestions", counts.suggestions, "non lues")),
+        h("div", { class: "two" },
+          h("div", { class: "card" }, h("h2", {}, "Activité des 14 derniers jours"), barChart(s.days),
+            h("div", { class: "legend" }, h("span", {}, h("b", { style: "background:#4f46e5" }), "Actions des clients"), h("span", {}, h("b", { style: "background:#f59e0b" }), "Demandes de réservation"))),
+          h("div", { class: "card" }, h("h2", {}, "Disponibilité des biens"),
+            meter("Disponibles", s.properties.available, s.properties.total), meter("Réservés", s.properties.reserved, s.properties.total), meter("Indisponibles", s.properties.unavailable, s.properties.total),
+            h("h2", { style: "margin-top:14px" }, "Demandes"), meter("En attente", s.orders.pending, s.orders.pending + s.orders.confirmed + s.orders.rejected), meter("Acceptées", s.orders.confirmed, s.orders.pending + s.orders.confirmed + s.orders.rejected), meter("Refusées", s.orders.rejected, s.orders.pending + s.orders.confirmed + s.orders.rejected))),
+        h("div", { class: "card" }, h("h2", {}, "Derniers événements"), ...(s.recent.length ? s.recent.map((n) => h("div", { class: "row", style: "padding:6px 0;border-bottom:1px solid var(--line)" }, h("span", {}, h("strong", {}, n.title), " ", h("span", { class: "muted" }, n.detail)), h("span", { class: "muted" }, when(n.created_at)))) : [h("p", { class: "muted" }, "Rien pour le moment.")])));
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
+    return box;
   }
 
-  api("/api/auth?a=me").then(async (r) => { me = r.user; await load(); render(); }).catch(() => render());
+  function chatView() {
+    let cur = 0;
+    const list = h("div", { class: "chat-list" }), pane = h("div", { class: "chat-pane" }, h("p", { class: "muted", style: "padding:16px" }, "Sélectionnez une conversation."));
+    let msgsBox = null, lastId = 0;
+    async function loadList() {
+      try {
+        const rows = await api("/api/chat?a=admin_threads");
+        list.replaceChildren(...(rows.length ? rows.map((t) => h("button", { class: "thread" + (t.id === cur ? " on" : ""), onclick: () => open(t) },
+          h("div", { class: "row" }, h("strong", {}, t.kind === "support" ? t.a_name : t.a_name + " ↔ " + t.b_name), t.unread ? h("span", { class: "badge" }, String(t.unread)) : ""),
+          h("small", {}, (t.kind === "direct" ? "Privé · " : "") + snip(t.last_body)))) : [h("p", { class: "muted", style: "padding:14px" }, "Aucune conversation.")]));
+      } catch (e) {}
+    }
+    async function loadMsgs(first) {
+      if (!cur || !msgsBox) return;
+      try {
+        const rows = await api("/api/chat?a=admin_messages&thread=" + cur);
+        if (!first && rows.length && rows[rows.length - 1].id === lastId) return;
+        lastId = rows.length ? rows[rows.length - 1].id : 0;
+        msgsBox.replaceChildren(...rows.map((m) => h("div", { class: "msg" + (m.mine ? " mine" : "") }, h("small", {}, m.who + " · " + when(m.created_at)), m.body)));
+        msgsBox.scrollTop = msgsBox.scrollHeight;
+      } catch (e) {}
+    }
+    function open(t) {
+      cur = t.id; lastId = 0;
+      msgsBox = h("div", { class: "msgs" });
+      const input = h("input", { placeholder: "Votre réponse…", maxlength: 2000 });
+      const form = t.kind === "support" ? h("form", { class: "send", onsubmit: async (e) => { e.preventDefault(); if (!input.value.trim()) return; const v = input.value; input.value = ""; try { await api("/api/chat?a=admin_send", "POST", { thread: cur, body: v }); await loadMsgs(true); loadList(); } catch (x) { alert(x.message); } } }, input, h("button", { type: "submit" }, "Envoyer"))
+        : h("p", { class: "muted", style: "padding:10px" }, "Conversation privée entre deux clients : lecture seule (modération).");
+      pane.replaceChildren(h("div", { class: "row", style: "padding:12px;border-bottom:1px solid var(--line)" }, h("strong", {}, t.kind === "support" ? t.a_name + " · " + (t.a_email || "") : t.a_name + " ↔ " + t.b_name)), msgsBox, form);
+      loadMsgs(true); loadList();
+    }
+    loadList(); pollTimer = setInterval(() => { loadList(); loadMsgs(false); }, 6000);
+    return h("div", {}, h("h2", {}, "Messagerie"), h("div", { class: "chat" }, list, pane));
+  }
+
+  function suggestionsView() {
+    return lazy("/api/console?a=suggestions", (rows, reload) => [h("h2", {}, rows.length + " suggestion(s)"), ...rows.map((s) => h("div", { class: "card" + (s.is_read ? "" : " unread") },
+      h("div", { class: "row" }, h("strong", {}, s.name || "Client"), h("span", { class: "muted" }, when(s.created_at))), h("div", { class: "muted" }, s.email || ""),
+      h("p", { style: "white-space:pre-wrap" }, s.message),
+      h("button", { class: "ghost", onclick: async () => { await api("/api/console?a=suggestions&id=" + s.id, "PATCH", { read: !s.is_read }); reload(); } }, s.is_read ? "Marquer non lue" : "Marquer lue")))]);
+  }
+  function auditView() {
+    return lazy("/api/console?a=audit", (rows) => [h("h2", {}, "Journal de sécurité (" + rows.length + ")"), ...rows.map((l) => h("div", { class: "card row" },
+      h("div", {}, h("strong", {}, l.action), " ", h("span", { class: "muted" }, l.detail || ""), h("br"), h("span", { class: "muted" }, l.email || "système")), h("span", { class: "muted" }, when(l.created_at))))]);
+  }
+
+  function profileView() {
+    const msg = h("p", { class: "err", role: "status" });
+    const phone = h("input", { type: "tel", value: me.phone || "", placeholder: "+237 6XX XX XX XX" }), wa = h("input", { type: "checkbox" }); wa.checked = !!me.whatsapp_optin;
+    const profile = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); msg.textContent = ""; try { await api("/api/auth?a=profile", "POST", { phone: phone.value, whatsapp: wa.checked }); me.phone = phone.value; me.whatsapp_optin = wa.checked; msg.className = "ok"; msg.textContent = "Profil enregistré."; } catch (x) { msg.className = "err"; msg.textContent = x.message; } } },
+      h("h2", {}, "Mon profil"), h("p", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur")),
+      field("Numéro WhatsApp (avec indicatif)", phone), h("br"), h("label", { class: "chk" }, wa, "Recevoir mes notifications sur WhatsApp quand je ne suis pas connecté"), msg, h("button", { type: "submit" }, "Enregistrer"));
+    const pmsg = h("p", { class: "err" }), cur = h("input", { type: "password", autocomplete: "current-password" }), nxt = h("input", { type: "password", autocomplete: "new-password", minlength: 12 });
+    const pw = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); pmsg.textContent = ""; try { await api("/api/auth?a=password", "POST", { current: cur.value, next: nxt.value }); pmsg.className = "ok"; pmsg.textContent = "Mot de passe modifié."; cur.value = nxt.value = ""; } catch (x) { pmsg.className = "err"; pmsg.textContent = x.message; } } },
+      h("h2", {}, "Changer le mot de passe"), h("div", { class: "grid" }, field("Mot de passe actuel", cur), field("Nouveau (12 caractères min.)", nxt)), pmsg, h("button", { type: "submit" }, "Modifier"));
+    const tbox = h("div", { class: "card" }, h("h2", {}, "Double authentification (2FA)"));
+    const tmsg = h("p", { class: "err" });
+    const draw = () => {
+      tbox.replaceChildren(h("h2", {}, "Double authentification (2FA)"));
+      if (me.totp_enabled) {
+        const pw2 = h("input", { type: "password" }), c2 = h("input", { inputmode: "numeric", maxlength: 8 });
+        tbox.append(h("p", { class: "ok" }, "✓ Activée : un code est demandé à chaque connexion."), h("div", { class: "grid" }, field("Mot de passe", pw2), field("Code actuel", c2)), tmsg,
+          h("button", { class: "danger", onclick: async () => { tmsg.textContent = ""; try { await api("/api/auth?a=totp_disable", "POST", { password: pw2.value, code: c2.value }); me.totp_enabled = false; draw(); } catch (x) { tmsg.textContent = x.message; } } }, "Désactiver"));
+      } else {
+        tbox.append(h("p", { class: "muted" }, "Utilisez une application comme Google Authenticator, Microsoft Authenticator ou Authy."), tmsg,
+          h("button", { onclick: async () => { tmsg.textContent = ""; try {
+            const r = await api("/api/auth?a=totp_setup", "POST", {}); const c3 = h("input", { inputmode: "numeric", maxlength: 8, placeholder: "Code à 6 chiffres" });
+            tbox.replaceChildren(h("h2", {}, "Double authentification (2FA)"), h("p", {}, "1. Dans votre application, choisissez « Saisir une clé de configuration » et entrez cette clé :"), h("p", {}, h("code", { style: "font-size:1.1rem;word-break:break-all" }, r.secret)),
+              h("p", { class: "muted" }, "(Sur téléphone, vous pouvez aussi ouvrir ce lien : "), h("a", { href: r.uri }, "ajouter automatiquement"), h("span", { class: "muted" }, ")"),
+              h("p", {}, "2. Saisissez le code affiché pour confirmer :"), field("Code", c3), tmsg,
+              h("button", { onclick: async () => { tmsg.textContent = ""; try { await api("/api/auth?a=totp_enable", "POST", { code: c3.value }); me.totp_enabled = true; draw(); } catch (x) { tmsg.textContent = x.message; } } }, "Activer la 2FA"));
+          } catch (x) { tmsg.textContent = x.message; } } }, "Activer la double authentification"));
+      }
+    };
+    draw();
+    return h("div", {}, profile, pw, tbox);
+  }
+
+
+  // ================= SUPERVISION (super administrateur) =================
+  let supTab = "overview";
+  const bytes = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + " Mo" : Math.max(1, Math.round(n / 1024)) + " Ko");
+  const dot = (ok) => h("span", { style: "display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:" + (ok ? "#12805c" : "#c0392b") });
+  const sevColor = { critique: "#c0392b", haute: "#e06c00", moyenne: "#b7791f", basse: "#6a7189" };
+  const sevPill = (s) => h("span", { class: "pill", style: "color:#fff;border:0;background:" + (sevColor[s] || "#6a7189") }, s);
+  const table = (heads, rows) => h("div", { style: "overflow-x:auto" }, h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...heads.map((x) => h("th", {}, x)))), h("tbody", {}, ...rows.map((r) => h("tr", {}, ...r.map((c) => h("td", {}, c)))))));
+  const panel = (path, build) => { const box = h("div", {}, h("p", { class: "muted" }, "Analyse en cours…")); api(path).then((d) => box.replaceChildren(...build(d, () => box.replaceWith(panel(path, build))))).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message))); return box; };
+
+  function overviewPanel() {
+    return panel("/api/monitor?a=overview", (d, reload) => {
+      const ev = d.events24, tot = d.stats.reduce((s, x) => s + x.n, 0), e5 = d.stats.filter((x) => x.class === "5xx").reduce((s, x) => s + x.n, 0), ms = d.stats.reduce((s, x) => s + Number(x.ms), 0);
+      const bad = (ev.error || 0) > 0 || d.checks.some((c) => !c.ok) || d.ips.some((i) => i.n >= 15);
+      const byApi = {}; d.stats.forEach((x) => { const a = (byApi[x.api] ||= { n: 0, c4: 0, c5: 0, ms: 0 }); a.n += x.n; a.ms += Number(x.ms); if (x.class === "4xx") a.c4 += x.n; if (x.class === "5xx") a.c5 += x.n; });
+      const kpi = (l, v, s, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), s ? h("div", { class: "kpi-s" }, s) : "");
+      return [
+        h("div", { class: "banner", style: bad ? "" : "background:rgba(18,128,92,.1);border-color:#12805c" }, dot(!bad), h("strong", {}, bad ? "Attention : des points demandent votre examen." : "Tout est normal."), " Données des dernières 24 h. ", h("button", { class: "ghost", onclick: reload }, "Actualiser")),
+        h("div", { class: "kpis" },
+          kpi("Requêtes API (7 j)", nf(tot), "Temps moyen " + (tot ? Math.round(ms / tot) : 0) + " ms"),
+          kpi("Erreurs serveur (24 h)", ev.error || 0, "Taux 7 j : " + (tot ? ((e5 / tot) * 100).toFixed(2) : 0) + " %", (ev.error || 0) > 0),
+          kpi("Tentatives suspectes (24 h)", ev.security || 0, "401 / 403 / 429", (ev.security || 0) > 10),
+          kpi("Incohérences API (24 h)", (ev.contract || 0) + (ev.validation || 0), (ev.contract || 0) + " route inconnue · " + (ev.validation || 0) + " requête invalide"),
+          kpi("Bugs navigateur (24 h)", ev.client || 0, "erreurs JavaScript chez les visiteurs", (ev.client || 0) > 0),
+          kpi("Journal", nf(d.logSize), "événements conservés (30 j)")),
+        h("div", { class: "two" },
+          h("div", { class: "card" }, h("h2", {}, "Trafic API sur 14 jours"), barChart(d.daily.map((x) => ({ day: x.day, actions: x.n, orders: x.errors }))),
+            h("div", { class: "legend" }, h("span", {}, h("b", { style: "background:#4f46e5" }), "Requêtes"), h("span", {}, h("b", { style: "background:#f59e0b" }), "Erreurs 5xx"))),
+          h("div", { class: "card" }, h("h2", {}, "Contrôles automatiques"), ...(d.checks.length ? d.checks.map((c) => h("div", { style: "padding:5px 0;border-bottom:1px solid var(--line)" }, dot(c.ok), h("strong", {}, c.name), h("div", { class: "muted", style: "margin-left:18px;font-size:.82rem" }, c.detail + " · " + when(c.at)))) : [h("p", { class: "muted" }, "Pas encore de contrôle quotidien (il s’exécute chaque matin à 5 h UTC une fois CRON_SECRET configuré).")]))),
+        h("div", { class: "card" }, h("h2", {}, "Détail par API (7 jours)"), table(["API", "Requêtes", "Erreurs 4xx", "Erreurs 5xx", "Temps moyen"], Object.entries(byApi).sort((a, b) => b[1].n - a[1].n).map(([k, v]) => [k, nf(v.n), String(v.c4), v.c5 ? h("strong", { style: "color:#c0392b" }, String(v.c5)) : "0", Math.round(v.ms / v.n) + " ms"]))),
+        h("div", { class: "card" }, h("h2", {}, "Adresses IP les plus suspectes (24 h)"), d.ips.length ? table(["Adresse IP", "Événements", "Échecs de connexion", "Dernier"], d.ips.map((i) => [i.ip, String(i.n), String(i.fails), when(i.last)])) : h("p", { class: "muted" }, "Aucune activité suspecte."))];
+    });
+  }
+
+  function dbPanel() {
+    return panel("/api/monitor?a=db", (d, reload) => {
+      const s = d.stats, hit = Number(s.blks_hit) + Number(s.blks_read) ? (Number(s.blks_hit) / (Number(s.blks_hit) + Number(s.blks_read))) * 100 : 100;
+      const kpi = (l, v, sub, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), sub ? h("div", { class: "kpi-s" }, sub) : "");
+      return [h("div", { class: "row", style: "margin-bottom:10px" }, h("p", { class: "muted", style: "margin:0" }, "PostgreSQL " + d.version + " (Neon)"), h("button", { class: "ghost", onclick: reload }, "Actualiser")),
+        h("div", { class: "kpis" }, kpi("Latence", d.latency + " ms", "aller-retour vers la base", d.latency > 400), kpi("Taille de la base", bytes(d.size), "stockage utilisé"), kpi("Connexions", s.numbackends, d.conns.map((c) => c.state + " : " + c.n).join(" · ")),
+          kpi("Cache mémoire", hit.toFixed(1) + " %", "lectures servies sans disque", hit < 90), kpi("Transactions", nf(Number(s.xact_commit)), nf(Number(s.xact_rollback)) + " annulées", Number(s.xact_rollback) > Number(s.xact_commit) * 0.05), kpi("Blocages (deadlocks)", s.deadlocks, "fichiers temporaires : " + s.temp_files, Number(s.deadlocks) > 0)),
+        h("div", { class: "card" }, h("h2", {}, "Tables"), table(["Table", "Lignes", "Lignes mortes", "Taille", "Lectures complètes", "Lectures par index"], d.tables.map((x) => [x.relname, nf(Number(x.rows)), String(x.dead), bytes(Number(x.size)), String(x.seq), String(x.idx)]))),
+        h("div", { class: "card" }, h("h2", {}, "Requêtes en cours"), d.running.length ? table(["Durée", "État", "Requête"], d.running.map((r) => [r.secs.toFixed(1) + " s", r.state, r.q])) : h("p", { class: "muted" }, "Aucune requête active.")),
+        h("div", { class: "card" }, h("h2", {}, "Requêtes les plus lentes"), d.slow.length ? table(["Moyenne", "Appels", "Total", "Requête"], d.slow.map((r) => [r.mean_ms + " ms", nf(Number(r.calls)), nf(r.total_ms) + " ms", r.q])) : h("p", { class: "muted" }, "Aucune donnée.")),
+        h("p", { class: "muted" }, "Pour le processeur, la mémoire et la facturation de la base, ouvrez aussi la console Neon (onglet Monitoring).")];
+    });
+  }
+
+  function serverPanel() {
+    return panel("/api/monitor?a=server", (d, reload) => {
+      const r = d.runtime, dep = d.deployments, hd = d.probes.find((p) => p.path === "/")?.headers;
+      const HL = { csp: "Content-Security-Policy", hsts: "HSTS (HTTPS forcé)", nosniff: "X-Content-Type-Options", frame: "Anti-clickjacking", referrer: "Referrer-Policy", coop: "Cross-Origin-Opener-Policy" };
+      return [h("div", { class: "row", style: "margin-bottom:10px" }, h("p", { class: "muted", style: "margin:0" }, "Hébergement serverless Vercel : pas de serveur à maintenir, mais des fonctions à surveiller."), h("button", { class: "ghost", onclick: reload }, "Actualiser")),
+        h("div", { class: "two" },
+          h("div", { class: "card" }, h("h2", {}, "Environnement d’exécution"), table(["Élément", "Valeur"], [["Node.js", r.node], ["Région", r.region], ["Environnement", r.env], ["Version déployée", (r.commit || "?") + (r.message ? " — " + r.message : "")], ["Auteur du commit", r.author || "?"], ["Mémoire de l’instance", r.memMb + " Mo"], ["Âge de l’instance", r.instanceAgeSec + " s"]])),
+          h("div", { class: "card" }, h("h2", {}, "Configuration des secrets"), ...d.config.map((c) => h("div", { style: "padding:4px 0" }, dot(c.set), c.label, c.set ? "" : h("span", { class: "muted" }, " — non configuré"))))),
+        h("div", { class: "card" }, h("h2", {}, "Sondes de disponibilité"), table(["Adresse", "Statut", "Temps", "Remarque"], d.probes.map((p) => [p.path, h("span", {}, dot(p.status >= 200 && p.status < 400), String(p.status || "erreur")), p.ms + " ms", p.error || ""]))),
+        hd ? h("div", { class: "card" }, h("h2", {}, "En-têtes de sécurité du site"), ...Object.entries(HL).map(([k, l]) => h("div", { style: "padding:3px 0" }, dot(hd[k]), l))) : "",
+        h("div", { class: "card" }, h("h2", {}, "Derniers déploiements"),
+          !dep.configured ? h("p", { class: "muted" }, "Pour voir l’historique des déploiements, ajoutez dans Vercel une variable SUPERVISION_VERCEL_TOKEN (jeton Vercel en lecture : Account Settings > Tokens).") : dep.error ? h("p", { class: "err" }, dep.error)
+          : table(["État", "Cible", "Date", "Commit", "Auteur"], dep.list.map((x) => [h("span", {}, dot(x.state === "READY"), x.state), x.target, when(x.created), (x.sha ? x.sha + " " : "") + x.commit, x.author]))),
+        h("p", { class: "muted" }, "Journaux bruts de la plateforme (invocations, erreurs de build) : tableau de bord Vercel > Logs. Les erreurs de l’application sont détaillées dans l’onglet « Application & API ».")];
+    });
+  }
+
+  function eventsPanel(kinds, intro) {
+    let kind = kinds[0][0];
+    const box = h("div", {});
+    const load = () => { box.replaceChildren(h("p", { class: "muted" }, "Chargement…")); api("/api/monitor?a=events&kind=" + kind).then((rows) => {
+      box.replaceChildren(rows.length ? table(["Date", "API", "Action", "Statut", "Durée", "IP", "Détail"], rows.map((e) => [when(e.at), e.api, (e.method ? e.method + " " : "") + (e.action || ""), String(e.status || ""), e.ms + " ms", e.ip, h("span", { style: "word-break:break-word" }, e.detail || "")])) : h("p", { class: "muted" }, "Rien à signaler sur cette catégorie. 👍"));
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message))); };
+    const bar = h("div", { class: "tabs-in" }, ...kinds.map(([k, l]) => h("button", { class: k === kind ? "" : "ghost", onclick: (e) => { kind = k; bar.querySelectorAll("button").forEach((b) => (b.className = "ghost")); e.target.className = ""; load(); } }, l)));
+    load(); return h("div", {}, h("p", { class: "muted" }, intro), bar, h("div", { class: "card", style: "margin-top:12px" }, box));
+  }
+
+  function codePanel() {
+    return panel("/api/monitor?a=code", (d, reload) => {
+      if (!d.readable) return [h("div", { class: "banner" }, "Le code déployé n’est pas lisible par la supervision (", d.count, " fichiers trouvés). Vérifiez que vercel.json contient bien la section « functions » fournie, puis redéployez.")];
+      const ig = d.integrity, changed = ig.modified.length + ig.added.length + ig.removed.length;
+      const depBox = h("div", {}, h("button", { class: "ghost", onclick: async (e) => { e.target.disabled = true; depBox.replaceChildren(h("p", { class: "muted" }, "Interrogation de la base de vulnérabilités OSV…")); try {
+        const rows = await api("/api/monitor?a=deps"); depBox.replaceChildren(table(["Paquet", "Version", "Utilisé par", "Vulnérabilités connues"], rows.map((x) => [x.name, x.version || "?", x.where, !x.checked ? "Vérification impossible" : x.vulns.length ? h("span", { style: "color:#c0392b" }, x.vulns.map((v) => v.id).join(", ")) : "✓ Aucune"])));
+      } catch (x) { depBox.replaceChildren(h("p", { class: "err" }, x.message)); } } }, "Vérifier les dépendances"));
+      return [
+        h("div", { class: "banner", style: !ig.baselineSet ? "" : changed ? "background:rgba(192,57,43,.1);border-color:#c0392b" : "background:rgba(18,128,92,.1);border-color:#12805c" },
+          dot(ig.baselineSet && !changed), h("strong", {}, !ig.baselineSet ? "Aucune version de référence." : changed ? changed + " fichier(s) différent(s) de la version approuvée !" : "Le code est identique à la version approuvée."), " ",
+          ig.baselineSet ? h("span", { class: "muted" }, "Référence du " + when(ig.approvedAt) + ". ") : h("span", { class: "muted" }, "Approuvez la version actuelle une fois que vous l’avez vérifiée. "),
+          h("button", { onclick: async () => { if (!confirm("Approuver la version actuelle du code comme référence de confiance ?")) return; try { await api("/api/monitor?a=approve", "POST", {}); reload(); } catch (x) { alert(x.message); } } }, ig.baselineSet ? "Approuver cette version" : "Approuver la version actuelle")),
+        changed ? h("div", { class: "card" }, h("h2", {}, "Fichiers modifiés depuis la référence"), table(["Fichier", "Changement"], [...ig.modified.map((f) => [f, "Modifié"]), ...ig.added.map((f) => [f, "Ajouté"]), ...ig.removed.map((f) => [f, "Supprimé"])]),
+          h("p", { class: "muted" }, "Si ces changements sont les vôtres, vérifiez-les puis cliquez sur « Approuver ». Sinon, quelqu’un a modifié le code : changez immédiatement vos accès GitHub et Vercel.")) : "",
+        h("div", { class: "card" }, h("h2", {}, "Analyse de sécurité du code (" + d.count + " fichiers, " + bytes(d.bytes) + ")"), d.findings.length
+          ? table(["Gravité", "Fichier", "Constat", "Que faire ?"], d.findings.map((f) => [sevPill(f.sev), f.file + (f.line ? ":" + f.line : ""), h("span", {}, f.rule, f.snippet ? h("div", { class: "muted", style: "font-size:.78rem;word-break:break-all" }, f.snippet) : ""), f.fix])) : h("p", { class: "ok" }, "✓ Aucun problème détecté par les règles automatiques."),
+          h("p", { class: "muted" }, "Analyse heuristique : elle repère les erreurs courantes, mais ne remplace pas un audit complet.")),
+        h("div", { class: "card" }, h("h2", {}, "Dépendances et bibliothèques"), depBox),
+        h("div", { class: "card" }, h("h2", {}, "Protéger le code source (à faire sur GitHub / Vercel)"),
+          ...["Activer la double authentification sur vos comptes GitHub et Vercel.", "Protéger la branche principale (Settings > Branches) : pull request obligatoire, force-push interdit.", "Activer Dependabot (alertes de sécurité et mises à jour automatiques) et le « secret scanning ».", "Limiter qui peut pousser du code et supprimer tout accès inutile (Settings > Collaborators).", "Garder le dépôt privé et ne jamais y enregistrer de mots de passe ou de clés.", "Activer la Deployment Protection de Vercel pour les aperçus."].map((x) => h("div", { style: "padding:3px 0" }, "☐ " + x)))];
+    });
+  }
+
+  function supervisionView() {
+    stopPoll();
+    const tabs = [["overview", "Vue d’ensemble"], ["db", "Base de données"], ["server", "Serveur"], ["app", "Application & API"], ["sec", "Sécurité & attaques"], ["code", "Code source"]];
+    const body = supTab === "db" ? dbPanel() : supTab === "server" ? serverPanel()
+      : supTab === "app" ? eventsPanel([["error", "Bugs serveur"], ["contract", "API incohérentes"], ["validation", "Requêtes invalides"], ["slow", "Lenteurs"], ["client", "Bugs navigateur"]], "Bugs et incohérences entre le site et ses API. « API incohérentes » = routes inexistantes ou méthodes refusées : le site appelle quelque chose que le serveur ne comprend pas.")
+      : supTab === "sec" ? eventsPanel([["security", "Accès refusés & attaques"]], "Connexions échouées (401), accès interdits (403) et blocages anti-abus (429). Une même adresse IP qui revient souvent indique une attaque par force brute.")
+      : supTab === "code" ? codePanel() : overviewPanel();
+    let cur = body;
+    if (supTab === "overview") pollTimer = setInterval(() => { if (!document.hidden && tab === "supervision" && supTab === "overview" && cur.isConnected) { const n = overviewPanel(); cur.replaceWith(n); cur = n; } }, 60000);
+    return h("div", {}, h("div", { class: "tabs-in" }, ...tabs.map(([k, l]) => h("button", { class: k === supTab ? "" : "ghost", onclick: () => { supTab = k; render(); } }, l))), h("div", { style: "margin-top:14px" }, body));
+  }
+
+  const NAV = (sup) => [
+    ["Pilotage", [["dashboard", "Tableau de bord"]]],
+    ["Gestion", [["annonces", "Annonces"], ["orders", "Commandes", "pendingOrders"], ["clients", "Clients", null, 1]]],
+    ["Communication", [["chat", "Messagerie", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Messages reçus"], ["suggestions", "Suggestions", "suggestions"]]],
+    ["Supervision", [["supervision", "Supervision", null, 1]]],
+    ["Contrôle", [["activity", "Activité des clients", null, 1], ["admins", "Administrateurs", null, 1], ["audit", "Journal de sécurité", null, 1], ["profile", "Mon profil"]]]
+  ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
+
+  async function render() {
+    stopPoll();
+    if (!me) { app.replaceChildren(loginView()); return; }
+    try { counts = await api("/api/console?a=counts"); } catch (e) {}
+    const sup = me.role === "super_admin";
+    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), "Maison Admin"));
+    for (const [g, items] of NAV(sup)) {
+      nav.append(h("div", { class: "grp" }, g));
+      for (const [id, label, cnt] of items) {
+        const n = cnt ? counts[cnt] : 0;
+        nav.append(h("button", { class: "nav" + (tab === id || (tab === "form" && id === "annonces") ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""));
+      }
+    }
+    nav.append(h("div", { class: "who" }, h("b", {}, me.name || me.email), sup ? "Super administrateur" : "Administrateur"));
+    const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
+      : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
+      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "annonces" ? listView() : dashboardView();
+    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", clients: "Clients", chat: "Messagerie", notifs: "Notifications", messages: "Messages reçus", suggestions: "Suggestions", activity: "Activité des clients", admins: "Administrateurs", audit: "Journal de sécurité", supervision: "Supervision", profile: "Mon profil" };
+    app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },
+      h("header", { class: "top" }, h("h1", {}, titles[tab] || "Tableau de bord"), h("div", { class: "row" },
+        h("a", { class: "btn ghost", href: "/" }, "Voir le site"), h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
+      h("div", { class: "content" }, body))));
+  }
+
+  api("/api/auth?a=me").then(async (r) => { me = r.user; tab = "dashboard"; await load(); render(); }).catch(() => render());
 })();

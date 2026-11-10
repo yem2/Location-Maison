@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, str, notifyCustomer, wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, str, notifyCustomer , wrap } from "./_lib.js";
 
 const toFront = (r) => ({
   id: r.id, title: r.title, location: r.location, price: Number(r.price), currency: r.currency,
