@@ -283,8 +283,8 @@
         h("div", { class: "row" }, h("strong", {}, o.property_title || "(bien supprimé)"), h("span", { class: "pill" }, ST[o.status] || o.status)),
         h("div", { class: "muted" }, o.customer_name + " · " + o.customer_email + (o.customer_phone ? " · " + o.customer_phone : "") + " · " + when(o.created_at)),
         o.message ? h("p", { style: "white-space:pre-wrap" }, o.message) : "",
-        Number(o.amount) > 0 ? h("div", { class: "row" }, h("span", {}, "Acompte : " + new Intl.NumberFormat("fr-FR").format(o.amount) + " " + o.currency + " — " + ({ none: "à payer", pending: "paiement en cours", failed: "paiement échoué", paid: "payé ✓", cash_pending: "espèces à encaisser" })[o.payment_status]),
-          o.payment_status === "cash_pending" ? h("button", { onclick: async () => { await api("/api/pay?a=markpaid", "POST", { orderId: o.id }); reload(); } }, "Espèces reçues : marquer payé") : "") : "",
+        Number(o.amount) > 0 ? h("div", { class: "row" }, h("span", {}, "Acompte : " + new Intl.NumberFormat("fr-FR").format(o.amount) + " " + o.currency + " — " + ({ none: "à payer", pending: "paiement en cours", failed: "paiement échoué", paid: "payé ✓", cash_pending: "à confirmer (espèces / mobile money)" })[o.payment_status] + (o.payment_method ? " · " + o.payment_method : "")),
+          o.payment_status === "cash_pending" ? h("button", { onclick: async () => { await api("/api/pay?a=markpaid", "POST", { orderId: o.id }); reload(); } }, "Paiement reçu : confirmer") : "") : "",
         o.status === "pending" ? h("div", { class: "row" },
           h("button", { onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "confirmed" }); reload(); } }, "Accepter (bien réservé)"),
           h("button", { class: "danger", onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "rejected" }); reload(); } }, "Refuser")) : "",
@@ -654,6 +654,130 @@
     return h("div", {}, h("div", { class: "tabs-in" }, ...tabs.map(([k, l]) => h("button", { class: k === supTab ? "" : "ghost", onclick: () => { supTab = k; render(); } }, l))), h("div", { style: "margin-top:14px" }, body));
   }
 
+  // ---------- Paiements (super administrateur) ----------
+  let payTab = "tx";
+  const PAY_ST = { pending: "En cours", awaiting_confirmation: "À confirmer", paid: "Payé", failed: "Échoué", cancelled: "Annulé", rejected: "Refusé", duplicate: "Doublon" };
+  const PAY_COLOR = { paid: "#12805c", awaiting_confirmation: "#b7791f", pending: "#6a7189", failed: "#c0392b", rejected: "#c0392b", duplicate: "#e06c00", cancelled: "#6a7189" };
+  const KIND_LBL = { cash: "Espèces", card: "Carte", orange_money: "Orange Money", mtn_momo: "MTN MoMo", paypal: "PayPal", bank_transfer: "Virement", other: "Autre" };
+  const payPill = (st) => h("span", { class: "pill", style: "color:#fff;border:0;background:" + (PAY_COLOR[st] || "#6a7189") }, PAY_ST[st] || st);
+  const fmtMoney = (n, c) => new Intl.NumberFormat("fr-FR").format(n) + " " + (SYM[c] || c);
+
+  function paymentsView() {
+    stopPoll();
+    const tabs = [["tx", "Transactions"], ["methods", "Moyens de paiement"], ["security", "Sécurité & API"]];
+    const body = payTab === "methods" ? payMethodsPanel() : payTab === "security" ? paySecurityPanel() : payTxPanel();
+    return h("div", {}, h("div", { class: "tabs-in" }, ...tabs.map(([k, l]) => h("button", { class: k === payTab ? "" : "ghost", onclick: () => { payTab = k; render(); } }, l))), h("div", { style: "margin-top:14px" }, body));
+  }
+
+  function payTxPanel() {
+    let st = "";
+    const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
+    const act = async (path, body) => { try { await api(path, "POST", body); load(); } catch (x) { alert(x.message); } };
+    const load = () => api("/api/pay?a=admin_payments" + (st ? "&status=" + st : "")).then((d) => {
+      const paid = d.summary.paid.map((p) => fmtMoney(p.total, p.currency)).join(" + ") || "0";
+      const filters = [["", "Toutes"], ["awaiting_confirmation", "À confirmer"], ["paid", "Payées"], ["pending", "En cours"], ["failed", "Échouées"]];
+      box.replaceChildren(
+        h("div", { class: "kpis" },
+          h("div", { class: "kpi" + (d.summary.awaiting ? " hot" : "") }, h("div", { class: "kpi-l" }, "À confirmer"), h("div", { class: "kpi-v" }, String(d.summary.awaiting)), h("div", { class: "kpi-s" }, "paiements manuels / espèces")),
+          h("div", { class: "kpi" }, h("div", { class: "kpi-l" }, "Encaissé"), h("div", { class: "kpi-v", style: "font-size:1.3rem" }, paid), h("div", { class: "kpi-s" }, "paiements confirmés"))),
+        h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...filters.map(([k, l]) => h("button", { class: k === st ? "" : "ghost", onclick: () => { st = k; load(); } }, l))),
+        d.rows.length ? table(["Date", "Client", "Bien", "Moyen", "Montant", "Statut", "Référence", "Actions"], d.rows.map((p) => [
+          when(p.created_at),
+          h("div", {}, p.customer_name || "—", h("br"), h("small", { class: "muted" }, p.customer_phone || p.customer_email || "")),
+          p.property_title || "—", KIND_LBL[p.kind] || p.kind, fmtMoney(p.amount, p.currency), payPill(p.status),
+          h("small", {}, p.payer_ref || String(p.reference).slice(-12), p.note ? " — " + p.note : ""),
+          h("div", { class: "row", style: "gap:6px;justify-content:flex-start" },
+            p.status === "awaiting_confirmation" ? h("button", { onclick: () => { if (confirm("Confirmer la réception de " + fmtMoney(p.amount, p.currency) + " ?")) act("/api/pay?a=admin_confirm", { paymentId: p.id }); } }, "Confirmer") : "",
+            p.status === "awaiting_confirmation" ? h("button", { class: "danger", onclick: () => { const r = prompt("Motif du refus (visible par le client) :"); if (r !== null) act("/api/pay?a=admin_reject", { paymentId: p.id, reason: r }); } }, "Refuser") : "",
+            ["pending", "failed", "cancelled"].includes(p.status) && !["manual", "cash"].includes(p.provider) ? h("button", { class: "ghost", onclick: () => act("/api/pay?a=admin_recheck", { paymentId: p.id }) }, "Revérifier") : "")
+        ])) : h("p", { class: "muted" }, "Aucune transaction pour le moment."));
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
+    load(); return box;
+  }
+
+  function payMethodsPanel() {
+    const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
+    const load = () => api("/api/pay?a=admin_methods").then((d) => {
+      const used = new Set(d.methods.map((m) => m.kind));
+      const addable = Object.entries(d.kinds).filter(([k]) => ["bank_transfer", "other"].includes(k) || !used.has(k));
+      let draft = null;
+      const list = h("div", {});
+      const paint = () => list.replaceChildren(...(draft ? [methodCard(d, draft, load)] : []), ...d.methods.map((m) => methodCard(d, m, load)));
+      const sel = h("select", {}, ...addable.map(([k, v]) => h("option", { value: k }, v.label)));
+      const add = addable.length ? h("div", { class: "card" }, h("div", { class: "row" }, h("strong", {}, "Ajouter un moyen de paiement"), h("div", { class: "row", style: "gap:8px" }, sel,
+        h("button", { onclick: () => { const k = sel.value; draft = { id: 0, kind: k, label: d.kinds[k].label, provider: d.kinds[k].providers[0], enabled: false, position: 99, account_name: "", account_number: "", instructions: "", ready: true }; paint(); } }, "Ajouter")))) : "";
+      box.replaceChildren(h("p", { class: "muted" }, "Activez les moyens proposés aux clients et renseignez les numéros ou comptes à créditer. Toute modification d’un numéro demande votre mot de passe" + (me.totp_enabled ? " et votre code de double authentification." : ".")), add, list);
+      paint();
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
+    load(); return box;
+  }
+
+  function methodCard(d, m, reload) {
+    const info = d.kinds[m.kind];
+    const label = h("input", { value: m.label, maxlength: 60 });
+    const provider = h("select", {}, ...info.providers.map((p) => h("option", { value: p, selected: p === m.provider }, d.providerLabels[p] || p)));
+    const accName = h("input", { value: m.account_name, maxlength: 100, autocomplete: "off", placeholder: "Nom du titulaire" });
+    const accNum = h("input", { value: m.account_number, maxlength: 60, autocomplete: "off", placeholder: "Numéro Orange Money / MTN, IBAN…" });
+    const instr = h("textarea", { maxlength: 600, placeholder: "Instructions affichées au client" }); instr.value = m.instructions;
+    const pos = h("input", { type: "number", value: m.position, min: 0, max: 999, inputmode: "numeric" });
+    const pw = h("input", { type: "password", autocomplete: "current-password", placeholder: "Votre mot de passe" });
+    const code = me.totp_enabled ? h("input", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, placeholder: "Code 2FA (6 chiffres)" }) : null;
+    const err = h("p", { class: "err", role: "alert" });
+    const en = h("input", { type: "checkbox" }); en.checked = !!m.enabled;
+    if (m.id) en.addEventListener("change", async () => { err.textContent = ""; try { await api("/api/pay?a=admin_toggle", "POST", { id: m.id, enabled: en.checked }); } catch (x) { en.checked = !en.checked; err.textContent = x.message; } });
+    const manualBox = h("div", { class: "grid" }, field("Titulaire du compte", accName), field("Numéro de paiement / de compte", accNum));
+    const instrBox = field("Instructions pour le client", instr);
+    const sync = () => { const p = provider.value; manualBox.style.display = p === "manual" ? "" : "none"; instrBox.style.display = p === "manual" || p === "cash" ? "" : "none"; };
+    provider.addEventListener("change", sync); sync();
+    const save = h("button", { onclick: async () => {
+      err.textContent = ""; save.disabled = true;
+      try {
+        await api("/api/pay?a=admin_save", "POST", { id: m.id, kind: m.kind, label: label.value, provider: provider.value, enabled: en.checked, position: Number(pos.value) || 0, account_name: accName.value, account_number: accNum.value, instructions: instr.value, password: pw.value, code: code ? code.value : "" });
+        reload();
+      } catch (x) { err.textContent = x.message; save.disabled = false; }
+    } }, m.id ? "Enregistrer" : "Créer");
+    const del = m.id ? h("button", { class: "danger", onclick: async () => {
+      if (!confirm("Supprimer « " + m.label + " » ? Les paiements déjà enregistrés sont conservés.")) return;
+      try { await api("/api/pay?a=admin_delete", "POST", { id: m.id, password: pw.value, code: code ? code.value : "" }); reload(); } catch (x) { err.textContent = x.message; }
+    } }, "Supprimer") : h("button", { class: "ghost", onclick: reload }, "Annuler");
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("strong", {}, (KIND_LBL[m.kind] || m.kind) + (m.id ? "" : " (nouveau)")), h("label", { class: "chk", style: "margin:0" }, en, "Activé pour les clients")),
+      !m.ready ? h("p", { class: "err" }, "Clés API absentes sur le serveur : voir l’onglet « Sécurité & API ».") : "",
+      h("div", { class: "grid", style: "margin-top:10px" }, field("Libellé affiché", label), field("Mode de paiement", provider), field("Ordre d’affichage", pos)),
+      manualBox, instrBox,
+      h("div", { class: "grid", style: "margin-top:6px" }, field("Mot de passe (pour enregistrer)", pw), code ? field("Code de double authentification", code) : ""),
+      err, h("div", { class: "row", style: "justify-content:flex-start" }, save, del));
+  }
+
+  function paySecurityPanel() {
+    return panel("/api/pay?a=admin_status", (d) => {
+      const e = d.env;
+      const row = (ok, title, text) => h("div", { class: "row", style: "justify-content:flex-start;align-items:flex-start;gap:0;margin-bottom:10px;flex-wrap:nowrap" }, dot(ok), h("div", {}, h("strong", {}, title), h("div", { class: "muted" }, text)));
+      return [
+        h("div", { class: "card" }, h("h2", {}, "État de la configuration serveur"),
+          row(e.flutterwave, "Flutterwave : clé secrète (FLW_SECRET_KEY)", e.flutterwave ? "Cartes Visa / Mastercard, Orange Money et MTN MoMo disponibles." : "Absente : les paiements en ligne par carte et mobile money sont désactivés."),
+          row(e.flutterwaveWebhook, "Flutterwave : secret du webhook (FLW_WEBHOOK_HASH)", e.flutterwaveWebhook ? "Les notifications de paiement sont authentifiées." : "Absent : sans lui, seul le retour du client confirme le paiement."),
+          row(e.paypal, "PayPal (PAYPAL_CLIENT_ID et PAYPAL_SECRET)", e.paypal ? (e.paypalLive ? "Mode réel (live)." : "Mode test (sandbox) : aucun vrai argent. Ajoutez PAYPAL_ENV=live pour la production.") : "Absent : PayPal est désactivé."),
+          row(e.encryption, "Clé de chiffrement (APP_SECRET)", e.encryption ? "Les numéros de compte sont chiffrés en base (AES-256)." : "Absente : une clé de secours est utilisée. Définissez APP_SECRET (longue phrase aléatoire)."),
+          row(d.https, "Connexion HTTPS", d.https ? "Le site est servi en HTTPS." : "Définissez SITE_URL en https:// : indispensable pour les paiements."),
+          row(!!me.totp_enabled, "Double authentification de votre compte", me.totp_enabled ? "Activée : exigée pour modifier un numéro de paiement." : "Désactivée : activez-la dans « Mon profil » pour protéger les numéros de paiement.")),
+        h("div", { class: "card" }, h("h2", {}, "Adresse du webhook Flutterwave"), h("code", { style: "word-break:break-all" }, d.webhookUrl),
+          h("p", { class: "muted" }, "À renseigner dans Flutterwave > Settings > Webhooks, avec le même secret que FLW_WEBHOOK_HASH.")),
+        h("div", { class: "card" }, h("h2", {}, "Protections actives"), h("ul", { style: "margin:0;padding-left:18px;line-height:1.7" }, ...[
+          "Le montant et la devise viennent toujours de la base de données, jamais du navigateur.",
+          "Un paiement en ligne n’est validé qu’après vérification auprès du fournisseur (montant, devise, référence).",
+          "Un seul paiement « payé » par demande ; une notification rejouée ne crédite rien deux fois ; un double paiement est signalé pour remboursement.",
+          "Une référence de transaction (Orange Money, MTN…) ne peut être utilisée qu’une seule fois.",
+          "Les données de carte ne transitent jamais par ce site (page de paiement du fournisseur).",
+          "Les clés API sont uniquement dans les variables d’environnement Vercel, jamais dans la base ni le navigateur.",
+          "Les numéros de compte sont chiffrés ; leur modification exige mot de passe (+ code 2FA) et est inscrite au journal de sécurité.",
+          "Limitation anti-abus sur chaque tentative de paiement, et refus de toute requête venant d’un autre site."
+        ].map((t) => h("li", {}, t)))),
+        h("div", { class: "card" }, h("h2", {}, "Où mettre les clés API ?"), h("p", { class: "muted", style: "margin:0" }, "Vercel > Settings > Environment Variables (type « Sensitive »), puis redéployer. Ne saisissez jamais une clé secrète dans ce tableau de bord : elle serait stockée en base de données."))
+      ];
+    });
+  }
+
   // Modules regroupés : un seul accès dans le menu, des onglets à l'intérieur
   const SUBS = {
     clients: [["clients", "Comptes"], ["activity", "Activité"]],
@@ -666,9 +790,27 @@
     return m ? h("div", { class: "tabs-in", style: "margin-bottom:14px" }, ...SUBS[m].map(([id, l, cnt]) => h("button", { class: id === tab ? "" : "ghost", onclick: () => { tab = id; render(); } }, l, cnt && counts[cnt] ? h("span", { class: "badge" }, String(counts[cnt])) : ""))) : "";
   };
   const NAV = (sup) => [
-    ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
+    ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["payments", "Paiements", null, 1], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
     ["Système", [["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
   ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
+
+  // ----- Menu mobile : barre fixe en bas (ne bouge pas, ne s'étire pas) -----
+  const svg = (d) => { const n = "http://www.w3.org/2000/svg", s = document.createElementNS(n, "svg"), p = document.createElementNS(n, "path"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("fill", "none"); s.setAttribute("stroke", "currentColor"); s.setAttribute("stroke-width", "2"); s.setAttribute("stroke-linecap", "round"); s.setAttribute("stroke-linejoin", "round"); s.setAttribute("aria-hidden", "true"); p.setAttribute("d", d); s.append(p); return s; };
+  const ICON = { dashboard: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z", annonces: "M3 21V9l9-6 9 6v12M9 21v-7h6v7", orders: "M6 2h12v20l-3-2-3 2-3-2-3 2zM9 7h6M9 11h6", chat: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z", more: "M5 12h.01M12 12h.01M19 12h.01" };
+  function mobileNav(sup, active, go, countOf) {
+    const main = [["dashboard", "Accueil"], ["annonces", "Annonces"], ["orders", "Commandes"], ["chat", "Messages"]];
+    const rest = NAV(sup).flatMap(([, items]) => items).filter(([id]) => !main.some(([m]) => m === id));
+    const sheet = h("div", { class: "sheet-back", hidden: true, onclick: () => { sheet.hidden = true; } },
+      h("div", { class: "sheet", role: "dialog", "aria-label": "Menu", onclick: (e) => e.stopPropagation() },
+        ...rest.map(([id, label, cnt]) => { const n = countOf(cnt); return h("button", { class: "ghost sheet-i" + (active === id ? " on" : ""), onclick: () => go(id) }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""); }),
+        h("a", { class: "btn ghost sheet-i", href: "/" }, "Voir le site"),
+        h("button", { class: "ghost sheet-i", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion")));
+    const restOn = rest.some(([id]) => id === active);
+    const bar = h("nav", { class: "tabbar", "aria-label": "Navigation principale" },
+      ...main.map(([id, label]) => { const n = countOf(NAV(sup).flatMap(([, it]) => it).find((i) => i[0] === id)?.[2]); return h("button", { class: "tb" + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, onclick: () => go(id) }, svg(ICON[id]), h("span", {}, label), n ? h("i", { class: "tb-badge" }, String(n)) : ""); }),
+      h("button", { class: "tb" + (restOn ? " on" : ""), "aria-haspopup": "dialog", onclick: () => { sheet.hidden = !sheet.hidden; } }, svg(ICON.more), h("span", {}, "Plus")));
+    return [bar, sheet];
+  }
 
   async function render() {
     stopPoll();
@@ -684,15 +826,18 @@
       }
     }
     nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur")))));
+    const countOf = (cnt) => (cnt ? cnt.reduce((t, k) => t + (counts[k] || 0), 0) : 0);
+    const go = (id) => { tab = id; window._cust = null; render(); };
     const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
-      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "payments" && sup ? paymentsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
-    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
+    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", payments: "Paiements", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
     app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },
       h("header", { class: "top" }, h("h1", {}, titles[MODULE[tab] || tab] || "Tableau de bord"), h("div", { class: "row" },
-        h("a", { class: "btn ghost", href: "/" }, "Voir le site"), h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
-      h("div", { class: "content" }, subBar(), body))));
+        h("a", { class: "btn ghost desk-only", href: "/" }, "Voir le site"), h("button", { class: "ghost desk-only", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
+      h("div", { class: "content" }, subBar(), body)), ...mobileNav(sup, MODULE[tab] || (tab === "form" ? "annonces" : tab), go, countOf)));
+    window.scrollTo(0, 0);
   }
 
   api("/api/auth?a=me").then(async (r) => { me = r.user; tab = "dashboard"; await load(); render(); }).catch(() => render());

@@ -46,11 +46,14 @@ export async function destroySession(req, res) {
 export async function currentUser(req) {
   const t = cookie(req, "sid");
   if (!t) return null;
-  const rows = await sql`SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND u.active`;
-  const u = rows[0] || null;
-  if (u) await sql`UPDATE users SET last_seen = now() WHERE id = ${u.id} AND (last_seen IS NULL OR last_seen < now() - interval '1 minute')`;
-  return u;
+  // Une seule requête : lit la session ET rafraîchit « dernière activité » (au plus une fois par minute)
+  const rows = await sql`WITH cur AS (
+      SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions ss JOIN users u ON u.id = ss.user_id
+      WHERE ss.token_hash = ${sha(t)} AND ss.expires_at > now() AND u.active
+    ), seen AS (
+      UPDATE users SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
+    ) SELECT * FROM cur`;
+  return rows[0] || null;
 }
 
 // Colonnes ajoutées par migration-superadmin.sql (archivage des biens, profil des administrateurs).
@@ -150,11 +153,13 @@ export async function destroyCustomerSession(req, res) {
 export async function currentCustomer(req) {
   const t = cookie(req, "csid");
   if (!t) return null;
-  const rows = await sql`SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions s JOIN customers c ON c.id = s.customer_id
-    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND c.active`;
-  const c = rows[0] || null;
-  if (c) await sql`UPDATE customers SET last_seen = now() WHERE id = ${c.id} AND (last_seen IS NULL OR last_seen < now() - interval '1 minute')`;
-  return c;
+  const rows = await sql`WITH cur AS (
+      SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions cs JOIN customers c ON c.id = cs.customer_id
+      WHERE cs.token_hash = ${sha(t)} AND cs.expires_at > now() AND c.active
+    ), seen AS (
+      UPDATE customers SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
+    ) SELECT * FROM cur`;
+  return rows[0] || null;
 }
 
 export async function requireCustomer(req, res) {
@@ -261,10 +266,12 @@ export function verifyTotp(secret, code) {
 export async function throttle(req, res, key, max, windowSec) {
   const ip = String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "?").trim().slice(0, 64);
   const k = `${key}:${ip}`;
-  await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`;
-  const [{ n }] = await sql`SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})`;
-  if (n >= max) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
-  await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
+  if (Math.random() < 0.02) await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`; // nettoyage occasionnel
+  // Une seule requête : compte les essais récents et enregistre celui-ci s'il reste de la place
+  const [r] = await sql`WITH c AS (SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})),
+      i AS (INSERT INTO rate_hits (key) SELECT ${k}::text WHERE (SELECT n FROM c) < ${max}::int RETURNING 1)
+    SELECT (SELECT count(*) FROM i)::int AS added`;
+  if (!r || !r.added) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
   return true;
 }
 
