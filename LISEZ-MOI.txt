@@ -1,28 +1,16 @@
-APPLICATION INSTALLABLE (PWA) - tout appareil : Android, iPhone/iPad, Windows, Mac, Linux
+INSTALLER L'ADMINISTRATION (Android, PC) - 3 fichiers a remplacer / ajouter dans GitHub
 
-FICHIERS (a placer a la racine du depot GitHub, memes chemins) :
-  manifest.webmanifest        nom, icones, couleurs, raccourcis
-  sw.js                       service worker (page hors ligne), version maison-v2
-  offline.html                page affichee sans connexion
-  js/install.js               enregistre le service worker + bandeau "Installer Maison"
-  assets/favicon.svg
-  assets/icons/*.png          icones 192, 512, maskable 512, apple-touch-icon
+  html/admin.html                  remplace l'ancien (ajoute le manifeste + install.js)
+  manifest-admin.webmanifest       NOUVEAU, a la racine du depot
+  js/install.js                    remplace l'ancien (textes "Maison Admin" sur /admin)
 
-A AJOUTER dans le <head> de chaque page (index.html, html/*.html) :
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
-  <meta name="theme-color" content="#16766e">
-et juste avant </body> :
-  <script src="/js/install.js" defer></script>
-
-A AJOUTER dans vercel.json, tableau "headers" :
-  { "source": "/sw.js", "headers": [
-      { "key": "Cache-Control", "value": "no-cache" },
-      { "key": "Service-Worker-Allowed", "value": "/" } ] },
-  { "source": "/manifest.webmanifest", "headers": [
+vercel.json, dans "headers", ajouter :
+  { "source": "/manifest-admin.webmanifest", "headers": [
       { "key": "Content-Type", "value": "application/manifest+json" } ] }
 
-COMPORTEMENT :
-  Android / Chrome / Edge / ordinateur : bandeau avec bouton "Installer".
-  iPhone / iPad (Safari) : le bandeau explique Partager > Sur l'ecran d'accueil.
-  Le HTTPS est obligatoire (Vercel le fournit). /api, /admin et /compte ne sont jamais mis en cache.
+INDISPENSABLE AVANT TOUT (sinon rien ne s'installe) :
+  Vercel > projet location_maison > Settings > Deployment Protection
+  > "Vercel Authentication" : DESACTIVER (ou ajouter un nom de domaine personnalise).
+  Tant qu'elle est active, le manifeste et le service worker sont bloques pour tous
+  les visiteurs : ni Android ni PC ne proposent l'installation, et vos clients ne
+  peuvent meme pas ouvrir le site sans compte Vercel.
