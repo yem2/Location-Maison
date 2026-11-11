@@ -38,7 +38,7 @@ async function handler(req, res) {
     const rows = all
       ? await sql`SELECT * FROM properties ORDER BY position, created_at`
       : await sql`SELECT * FROM properties WHERE published ORDER BY position, created_at`;
-    res.setHeader("Cache-Control", all ? "private, no-store" : "public, s-maxage=30, stale-while-revalidate=120");
+    if (!all) res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
     return send(res, 200, rows.map(toFront));
   }
   const user = await requireUser(req, res);

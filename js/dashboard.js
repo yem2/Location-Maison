@@ -163,16 +163,29 @@
           notes.length ? h("p", {}, h("button", { class: "btn ghost sm", type: "button", onclick: () => go("notifications") }, "Tout voir")) : "")));
   }
 
+  async function pay(kind, o, btn, errEl) {
+    btn.disabled = true; errEl.textContent = "";
+    try {
+      const r = await api("/api/pay?a=" + kind, "POST", { orderId: o.id });
+      if (r.link) { window.location.href = r.link; return; }
+      toast("Paiement en espèces enregistré : réglez-le à l’agence.");
+      await reloadOrders(); render();
+    } catch (x) { errEl.textContent = x.message; btn.disabled = false; }
+  }
   function payBlock(o) {
     if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
+    const err = h("p", { class: "err", role: "alert" });
     const box = h("div", { class: "paybox" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
     if (o.payment_status === "paid") box.append(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
-    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
+    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, "Paiement en espèces à régler à l’agence."));
     else {
       if (o.payment_status === "pending") box.append(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
-      box.append(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => window.MaisonPay.open(o, async () => { await reloadOrders(); render(); }) }, "Payer l’acompte")));
+      box.append(h("div", { class: "row" },
+        h("button", { class: "btn", type: "button", disabled: !payCfg.online, title: payCfg.online ? "" : "Paiement en ligne bientôt disponible", onclick: (e) => pay("online", o, e.currentTarget, err) }, "Payer en ligne (Mobile Money, carte)"),
+        h("button", { class: "btn ghost", type: "button", onclick: (e) => pay("cash", o, e.currentTarget, err) }, "Payer en espèces à l’agence")));
+      if (!payCfg.online) box.append(h("small", { class: "muted" }, "Le paiement en ligne n’est pas encore activé."));
     }
-    return box;
+    box.append(err); return box;
   }
   function requests() {
     const groups = { all: () => true, pending: (o) => o.status === "pending", confirmed: (o) => o.status === "confirmed", closed: (o) => ["rejected", "cancelled"].includes(o.status) };

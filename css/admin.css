@@ -2,15 +2,15 @@
 @media (prefers-color-scheme:dark){:root{--bg:#0d1020;--card:#171b30;--ink:#eef0fa;--mut:#9aa1bd;--line:#262b46;--acc:#818cf8;--acc2:#a78bfa;--side:#0a0d1c}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
 h1{font-size:1.35rem;margin:0}h2{font-size:1.05rem;margin:0 0 12px}.muted{color:var(--mut)}
-.shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
-.side{background:var(--side);color:var(--sidei);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:auto}
+.shell{display:grid;grid-template-columns:250px 1fr;min-height:100vh;min-height:100dvh;align-items:start}
+.side{background:var(--side);color:var(--sidei);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;height:100dvh;overflow:auto}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;color:#fff;font-size:1.1rem;padding:6px 10px 16px}
 .brand i{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-style:normal}
 .grp{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:#7c84ad;padding:14px 10px 4px}
 .nav{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;background:none;border:0;color:inherit;text-align:left;padding:9px 10px;border-radius:10px;font:inherit;cursor:pointer}
 .nav:hover{background:rgba(255,255,255,.07)}.nav.on{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;font-weight:600}
 .badge{background:#ef4444;color:#fff;border-radius:99px;font-size:.72rem;font-weight:700;padding:1px 7px;min-width:20px;text-align:center}
-.who{margin-top:auto;padding:12px 10px;border-top:1px solid rgba(255,255,255,.1);font-size:.82rem}.who b{display:block;color:#fff}
+.who{margin-top:auto;padding:12px 10px;border-top:1px solid rgba(255,255,255,.1);font-size:.82rem}.who b{display:block;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .main{min-width:0}.top{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:16px 24px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 .content{padding:22px 24px 48px;max-width:1150px}
 button,.btn{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;border:0;border-radius:10px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
@@ -39,7 +39,6 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 .msg{max-width:78%;padding:8px 12px;border-radius:14px;background:var(--bg);align-self:flex-start;white-space:pre-wrap;word-break:break-word}
 .msg.mine{align-self:flex-end;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}.msg small{display:block;opacity:.7;font-size:.7rem}
 .send{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}.send input{flex:1}.send button{width:auto}
-@media (max-width:860px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;flex-direction:row;overflow-x:auto;gap:2px;padding:8px}.brand,.grp,.who{display:none}.nav{white-space:nowrap;width:auto}.two{grid-template-columns:1fr}.chat{grid-template-columns:1fr;height:auto}.chat-list{max-height:220px}.msgs{min-height:260px;max-height:50vh}.content,.top{padding-left:14px;padding-right:14px}}
 
 .tbl{width:100%;border-collapse:collapse;font-size:.85rem}.tbl th{text-align:left;color:var(--mut);font-weight:600;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
 .tbl td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -54,35 +53,26 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 .presence.online{color:#0f8a57;background:rgba(18,183,106,.16)}.presence.online::before{animation:pulse 1.8s infinite}
 .presence.offline{color:var(--mut);background:var(--line)}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,183,106,.6)}70%{box-shadow:0 0 0 6px rgba(18,183,106,0)}100%{box-shadow:0 0 0 0 rgba(18,183,106,0)}}
-.who-id{display:flex;gap:10px;align-items:center}.who-role{display:block;opacity:.75}.who .presence{margin:3px 0}
+.brand-t{display:flex;flex-direction:column;line-height:1.15;min-width:0}.brand-t small{font-weight:500;font-size:.68rem;letter-spacing:.01em;opacity:.7;white-space:nowrap}
+.who{flex:none;overflow:hidden;border:1px solid rgba(255,255,255,.12);border-radius:14px;margin:auto 4px 4px;padding:12px}
+.who-id{display:flex;gap:10px;align-items:center;min-width:0}.who-txt{min-width:0;flex:1}.who-role{display:block;opacity:.75}.who .presence{margin:3px 0}
+.who-mail{display:block;margin-top:10px;font-size:.8rem;opacity:.85;overflow-wrap:anywhere;line-height:1.25}
+.who .who-btn{display:block;width:100%;box-sizing:border-box;text-align:center;margin-top:8px;color:#fff;border:1px solid rgba(255,255,255,.28);background:transparent;padding:8px 10px;font-size:.88rem}.who .who-btn:hover{background:rgba(255,255,255,.1)}
+.top-acts{display:none}
 .who-card{display:flex;gap:16px;align-items:center;margin-bottom:14px}.uid{display:flex;gap:12px;align-items:center}
 .card .card{margin-bottom:8px;box-shadow:none}.archived{opacity:.65}
 .msg{position:relative}.msg-del{display:block;margin-top:4px;padding:2px 8px;font-size:.7rem;background:transparent;color:inherit;border:1px solid currentColor;border-radius:8px;opacity:.6}.msg-del:hover{opacity:1}
 
-/* ===== Mobile (iPhone / Android) : menu fixe en bas, plus aucun agrandissement au toucher ===== */
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-button,a,select,input,textarea,summary{touch-action:manipulation}
-.tabbar,.sheet-back{display:none}
 @media (max-width:860px){
-  /* iOS agrandit la page quand un champ fait moins de 16 px : on force 16 px */
-  input,select,textarea{font-size:16px}
-  /* La grille s'étirait sur toute la hauteur et gonflait le menu : on la remet en flux normal */
-  .shell{display:block;min-height:0}
-  .side{display:none}
-  .top{padding-top:max(12px,env(safe-area-inset-top))}
-  .top .desk-only{display:none}
-  .content{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
-  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;gap:2px;background:var(--side);border-top:1px solid rgba(255,255,255,.12);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
-  .tb{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;position:relative;background:none;color:var(--sidei);border-radius:12px;padding:7px 2px;font-size:.68rem;font-weight:500;line-height:1.1;white-space:nowrap}
-  .tb svg{width:22px;height:22px;flex:none}
-  .tb span{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-  .tb.on{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}
-  .tb-badge{position:absolute;top:2px;right:18%;min-width:18px;padding:0 5px;border-radius:99px;background:#ef4444;color:#fff;font:700 .65rem/18px system-ui,sans-serif;font-style:normal;text-align:center}
-  .sheet-back{display:block;position:fixed;inset:0;z-index:40;background:rgba(5,8,20,.55)}
-  .sheet-back[hidden]{display:none}
-  .sheet{position:absolute;left:0;right:0;bottom:0;display:grid;gap:8px;background:var(--card);border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}
-  .sheet-i{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;padding:13px 14px;border-radius:12px;color:var(--ink);text-decoration:none}
-  .sheet-i.on{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;border-color:transparent}
-  .chat{height:calc(100vh - 260px)}
-  .card .row{align-items:flex-start}
+  /* Mobile : le menu devient une barre fixe en bas de l'écran (hauteur propre, jamais étirée), comme une application */
+  .shell{display:block;min-height:100vh;min-height:100dvh}
+  .side{position:fixed;left:0;right:0;bottom:0;top:auto;height:auto;z-index:30;flex-direction:row;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;padding:6px 8px calc(6px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,.14);-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:none;box-shadow:0 -6px 24px rgba(0,0,0,.25)}
+  .side::-webkit-scrollbar{display:none}
+  .brand,.grp,.who{display:none}.top-acts{display:flex}
+  .nav{flex:0 0 auto;width:auto;white-space:nowrap;justify-content:center;gap:6px;padding:11px 14px;font-size:.92rem;-webkit-tap-highlight-color:transparent}
+  .main{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+  .top{flex-wrap:wrap;padding-top:calc(12px + env(safe-area-inset-top));padding-bottom:12px}.top h1{font-size:1.25rem;margin:0}.top .row{gap:6px}.top .btn,.top button{padding:7px 11px;font-size:.88rem}
+  .tabs-in{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}.tabs-in::-webkit-scrollbar{display:none}.tabs-in>button{flex:0 0 auto;white-space:nowrap}
+  input,select,textarea{font-size:16px} /* évite le zoom automatique d'iOS au toucher d'un champ */
+  .two{grid-template-columns:1fr}.chat{grid-template-columns:1fr;height:auto}.chat-list{max-height:220px}.msgs{min-height:260px;max-height:50vh}.content,.top{padding-left:14px;padding-right:14px}
 }

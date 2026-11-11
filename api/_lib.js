@@ -32,8 +32,10 @@ export function cookie(req, name) {
 
 export async function createSession(res, userId) {
   const token = crypto.randomBytes(32).toString("hex");
-  await sql`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${sha(token)}, ${userId}, now() + interval '8 hours')`;
-  await sql`DELETE FROM sessions WHERE expires_at < now()`;
+  await sql.transaction([
+    sql`INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (${sha(token)}, ${userId}, now() + interval '8 hours')`,
+    sql`DELETE FROM sessions WHERE expires_at < now()`
+  ]);
   res.setHeader("Set-Cookie", `sid=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=28800`);
 }
 
@@ -46,13 +48,11 @@ export async function destroySession(req, res) {
 export async function currentUser(req) {
   const t = cookie(req, "sid");
   if (!t) return null;
-  // Une seule requête : lit la session ET rafraîchit « dernière activité » (au plus une fois par minute)
-  const rows = await sql`WITH cur AS (
-      SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions ss JOIN users u ON u.id = ss.user_id
-      WHERE ss.token_hash = ${sha(t)} AND ss.expires_at > now() AND u.active
-    ), seen AS (
-      UPDATE users SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
-    ) SELECT * FROM cur`;
+  // Une seule requête : lecture de la session + « dernière activité » (au plus une fois par minute)
+  const rows = await sql`WITH s AS (SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND u.active),
+    up AS (UPDATE users SET last_seen = now() WHERE id IN (SELECT id FROM s) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id)
+    SELECT * FROM s`;
   return rows[0] || null;
 }
 
@@ -62,10 +62,16 @@ let schemaP;
 export function ensureSchema() {
   schemaP ??= (async () => {
     try {
-      await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
-      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
-      await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
-      await sql`CREATE TABLE IF NOT EXISTS password_resets (
+      const [st] = await sql`SELECT
+        (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'properties' AND column_name IN ('archived', 'archived_at')) AS p,
+        (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name IN ('avatar', 'bio', 'city')) AS u,
+        (SELECT count(*)::int FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'customers' AND column_name = 'archived_at') AS c,
+        (to_regclass('public.password_resets') IS NOT NULL) AS r`;
+      // Les ALTER TABLE verrouillent la table : on ne les lance que s'il manque quelque chose
+      if (st.p < 2) await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
+      if (st.u < 3) await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
+      if (st.c < 1) await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
+      if (!st.r) await sql`CREATE TABLE IF NOT EXISTS password_resets (
         id bigserial PRIMARY KEY, kind text NOT NULL, account_id bigint NOT NULL, token_hash text NOT NULL UNIQUE,
         expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
       return true;
@@ -153,12 +159,10 @@ export async function destroyCustomerSession(req, res) {
 export async function currentCustomer(req) {
   const t = cookie(req, "csid");
   if (!t) return null;
-  const rows = await sql`WITH cur AS (
-      SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions cs JOIN customers c ON c.id = cs.customer_id
-      WHERE cs.token_hash = ${sha(t)} AND cs.expires_at > now() AND c.active
-    ), seen AS (
-      UPDATE customers SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
-    ) SELECT * FROM cur`;
+  const rows = await sql`WITH s AS (SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions s JOIN customers c ON c.id = s.customer_id
+      WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND c.active),
+    up AS (UPDATE customers SET last_seen = now() WHERE id IN (SELECT id FROM s) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id)
+    SELECT * FROM s`;
   return rows[0] || null;
 }
 
@@ -266,12 +270,12 @@ export function verifyTotp(secret, code) {
 export async function throttle(req, res, key, max, windowSec) {
   const ip = String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "?").trim().slice(0, 64);
   const k = `${key}:${ip}`;
-  if (Math.random() < 0.02) await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`; // nettoyage occasionnel
-  // Une seule requête : compte les essais récents et enregistre celui-ci s'il reste de la place
+  // Compte + enregistrement en une seule requête ; le nettoyage des vieilles lignes n'a lieu qu'une fois sur 50
   const [r] = await sql`WITH c AS (SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})),
-      i AS (INSERT INTO rate_hits (key) SELECT ${k}::text WHERE (SELECT n FROM c) < ${max}::int RETURNING 1)
-    SELECT (SELECT count(*) FROM i)::int AS added`;
-  if (!r || !r.added) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
+    i AS (INSERT INTO rate_hits (key) SELECT ${k} WHERE (SELECT n FROM c) < ${max} RETURNING 1)
+    SELECT n FROM c`;
+  if (Math.random() < 0.02) sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`.catch(() => {});
+  if (r.n >= max) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
   return true;
 }
 

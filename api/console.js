@@ -7,23 +7,27 @@ async function handler(req, res) {
   const isSuper = me.role === "super_admin";
 
   if (a === "counts") {
-    const [n] = await sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`;
-    const [o] = await sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`;
-    const [ch] = await sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`;
-    const [sg] = await sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`;
+    const [[n], [o], [ch], [sg]] = await sql.transaction([
+      sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`,
+      sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`,
+      sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`,
+      sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`
+    ], { readOnly: true }); // un seul aller-retour vers la base
     return send(res, 200, { notifications: n.n, pendingOrders: o.n, chat: ch.n, suggestions: sg.n });
   }
   if (a === "stats") {
-    const [p] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`;
-    const [c] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM customers`;
-    const [o] = await sql`SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'confirmed')::int AS confirmed, count(*) FILTER (WHERE status = 'rejected')::int AS rejected, count(*) FILTER (WHERE payment_status = 'cash_pending')::int AS cash_pending FROM orders`;
-    const [m] = await sql`SELECT count(*) FILTER (WHERE NOT is_read)::int AS unread FROM messages`;
-    const revenue = await sql`SELECT currency, sum(amount)::float AS total FROM orders WHERE payment_status = 'paid' GROUP BY currency ORDER BY total DESC`;
-    const days = await sql`SELECT to_char(d, 'DD/MM') AS day,
+    const [[p], [c], [o], [m], revenue, days, recent] = await sql.transaction([
+      sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`,
+      sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM customers`,
+      sql`SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'confirmed')::int AS confirmed, count(*) FILTER (WHERE status = 'rejected')::int AS rejected, count(*) FILTER (WHERE payment_status = 'cash_pending')::int AS cash_pending FROM orders`,
+      sql`SELECT count(*) FILTER (WHERE NOT is_read)::int AS unread FROM messages`,
+      sql`SELECT currency, sum(amount)::float AS total FROM orders WHERE payment_status = 'paid' GROUP BY currency ORDER BY total DESC`,
+      sql`SELECT to_char(d, 'DD/MM') AS day,
       (SELECT count(*)::int FROM activity a WHERE a.created_at::date = d::date) AS actions,
       (SELECT count(*)::int FROM orders x WHERE x.created_at::date = d::date) AS orders
-      FROM generate_series(current_date - 13, current_date, interval '1 day') AS d ORDER BY d`;
-    const recent = await sql`SELECT type, title, detail, created_at FROM admin_notifications ORDER BY created_at DESC LIMIT 6`;
+      FROM generate_series(current_date - 13, current_date, interval '1 day') AS d ORDER BY d`,
+      sql`SELECT type, title, detail, created_at FROM admin_notifications ORDER BY created_at DESC LIMIT 6`
+    ], { readOnly: true }); // un seul aller-retour vers la base
     return send(res, 200, { properties: p, customers: c, orders: o, messagesUnread: m.unread, revenue, days, recent });
   }
   if (a === "suggestions") {
