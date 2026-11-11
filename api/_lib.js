@@ -61,11 +61,55 @@ export function ensureSchema() {
     try {
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
       await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
+      await sql`CREATE TABLE IF NOT EXISTS password_resets (
+        id bigserial PRIMARY KEY, kind text NOT NULL, account_id bigint NOT NULL, token_hash text NOT NULL UNIQUE,
+        expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
       return true;
     } catch { return false; }
   })().then((ok) => { if (!ok) schemaP = null; return ok; });
   return schemaP;
 }
+
+// ---------- Mot de passe oublié ----------
+// E-mail envoyé via Resend (variables RESEND_API_KEY et MAIL_FROM). Renvoie false si non configuré ou en échec.
+export const mailConfigured = () => !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
+export async function sendMail(to, subject, text) {
+  if (!mailConfigured()) return false;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST", signal: AbortSignal.timeout(8000),
+      headers: { Authorization: "Bearer " + process.env.RESEND_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject, text })
+    });
+    return r.ok;
+  } catch { return false; }
+}
+const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
+// Adresse du site pour les liens : SITE_URL en priorité (évite toute falsification de l'en-tête Host)
+export const siteUrl = (req) => (process.env.SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? "https://" + process.env.VERCEL_PROJECT_PRODUCTION_URL : "https://" + req.headers.host)).replace(/\/+$/, "");
+
+// Crée un lien à usage unique (30 min) et l'envoie. Silencieux si le compte n'existe pas ou si un e-mail est parti il y a moins de 2 minutes.
+export async function startReset(req, kind, account, path, label) {
+  if (!mailConfigured() || !(await ensureSchema())) return false;
+  const [recent] = await sql`SELECT 1 FROM password_resets WHERE kind = ${kind} AND account_id = ${account.id} AND created_at > now() - interval '2 minutes'`;
+  if (recent) return true;
+  const token = crypto.randomBytes(32).toString("hex");
+  await sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${account.id} AND used_at IS NULL`;
+  await sql`INSERT INTO password_resets (kind, account_id, token_hash, expires_at) VALUES (${kind}, ${account.id}, ${sha256(token)}, now() + interval '30 minutes')`;
+  const link = siteUrl(req) + path + "#reset=" + token;
+  const sent = await sendMail(account.email, "Réinitialisation de votre mot de passe",
+    `Bonjour${account.name ? " " + account.name : ""},\n\nVous avez demandé à réinitialiser le mot de passe de votre ${label}.\nCliquez sur ce lien (valable 30 minutes, utilisable une seule fois) :\n\n${link}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.`);
+  if (!sent) await sql`DELETE FROM password_resets WHERE token_hash = ${sha256(token)}`; // échec d'envoi : on peut redemander tout de suite
+  return sent;
+}
+// Retrouve le compte d'un lien valide (sans le consommer)
+export async function findReset(kind, token) {
+  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token) || !(await ensureSchema())) return null;
+  const [r] = await sql`SELECT id, account_id FROM password_resets WHERE kind = ${kind} AND token_hash = ${sha256(token)} AND used_at IS NULL AND expires_at > now()`;
+  return r || null;
+}
+export const burnResets = (kind, accountId) => sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${accountId} AND used_at IS NULL`;
 
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
