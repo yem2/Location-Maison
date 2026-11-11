@@ -1,0 +1,28 @@
+APPLICATION INSTALLABLE (PWA) - tout appareil : Android, iPhone/iPad, Windows, Mac, Linux
+
+FICHIERS (a placer a la racine du depot GitHub, memes chemins) :
+  manifest.webmanifest        nom, icones, couleurs, raccourcis
+  sw.js                       service worker (page hors ligne), version maison-v2
+  offline.html                page affichee sans connexion
+  js/install.js               enregistre le service worker + bandeau "Installer Maison"
+  assets/favicon.svg
+  assets/icons/*.png          icones 192, 512, maskable 512, apple-touch-icon
+
+A AJOUTER dans le <head> de chaque page (index.html, html/*.html) :
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
+  <meta name="theme-color" content="#16766e">
+et juste avant </body> :
+  <script src="/js/install.js" defer></script>
+
+A AJOUTER dans vercel.json, tableau "headers" :
+  { "source": "/sw.js", "headers": [
+      { "key": "Cache-Control", "value": "no-cache" },
+      { "key": "Service-Worker-Allowed", "value": "/" } ] },
+  { "source": "/manifest.webmanifest", "headers": [
+      { "key": "Content-Type", "value": "application/manifest+json" } ] }
+
+COMPORTEMENT :
+  Android / Chrome / Edge / ordinateur : bandeau avec bouton "Installer".
+  iPhone / iPad (Safari) : le bandeau explique Partager > Sur l'ecran d'accueil.
+  Le HTTPS est obligatoire (Vercel le fournit). /api, /admin et /compte ne sont jamais mis en cache.
