@@ -90,3 +90,5 @@ input[type="range"] { width: 100%; }
 
 /* Curseurs du simulateur : la marge par défaut les faisait déborder de 3 px */
 input[type="range"] { margin: 0; }
+/* iOS : pas de zoom automatique au focus */
+@media (max-width:860px){input,select,textarea{font-size:16px}button,a,select,input,textarea{touch-action:manipulation}}

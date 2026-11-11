@@ -36,3 +36,5 @@
 .acc-msg.mine{align-self:flex-end;background:#b5532f;color:#fff}.acc-msg small{display:block;opacity:.7;font-size:.7rem}
 .acc-send{display:flex;gap:8px}.acc-send input{flex:1;padding:10px;border:1px solid #d9d6cf;border-radius:10px;font:inherit;background:#fff;color:#1f2330}
 @media (prefers-color-scheme:dark){.acc-msg{background:#2a2f44;color:#eef0f5}.acc-msg.mine{background:#b5532f}.acc-msgs,.acc-thread,.acc-tab{border-color:#2c303c}.acc-send input{background:#14161c;color:#eef0f5;border-color:#2c303c}}
+/* iOS : pas de zoom automatique au focus */
+@media (max-width:860px){.acc-field input,.acc-field select,.acc-field textarea,dialog input,dialog textarea{font-size:16px}}
