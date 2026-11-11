@@ -16,7 +16,7 @@
   async function api(path, method = "GET", body) {
     const r = await fetch(path, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
-    if (r.status === 401 && me && !path.includes("a=reset")) { me = null; render(); }
+    if (r.status === 401 && me) { me = null; render(); }
     if (!r.ok) { const e = new Error(data.error || "Erreur " + r.status); e.data = data; throw e; }
     return data;
   }
@@ -98,12 +98,7 @@
   window.addEventListener("online", beat);
   window.addEventListener("offline", () => { presence = "offline"; paintPresence(); });
 
-  // Écran d'accès : connexion, mot de passe oublié, réinitialisation (lien reçu par e-mail : /admin#reset=…)
   function loginView() {
-    const tk = (location.hash.match(/^#reset=([a-f0-9]{64})$/) || [])[1];
-    if (tk) return resetView(tk);
-    if (window._authMode === "forgot") return forgotView();
-    const note = window._authNote; window._authNote = null;
     const err = h("p", { class: "err", role: "alert" });
     const email = h("input", { type: "email", required: true, autocomplete: "username" });
     const pw = h("input", { type: "password", required: true, autocomplete: "current-password" });
@@ -113,43 +108,9 @@
       e.preventDefault(); err.textContent = "";
       try { await api("/api/auth?a=login", "POST", { email: email.value, password: pw.value, code: code.value }); me = (await api("/api/auth?a=me")).user; presence = "online"; await load(); render(); }
       catch (x) { err.textContent = x.message; if (x.data && x.data.needCode) { codeBox.hidden = false; code.focus(); } }
-    } }, h("h1", {}, "Administration"), h("p", { class: "muted" }, "Connexion réservée aux administrateurs."), note ? h("p", { class: "ok", role: "status" }, note) : "",
-      field("E-mail", email), h("br"), field("Mot de passe", pw), codeBox, err, h("button", { type: "submit" }, "Se connecter"),
-      h("p", { style: "margin:14px 0 0;text-align:center" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); window._authMode = "forgot"; render(); } }, "Mot de passe oublié ?")));
+    } }, h("h1", {}, "Administration"), h("p", { class: "muted" }, "Connexion réservée aux administrateurs."),
+      field("E-mail", email), h("br"), field("Mot de passe", pw), codeBox, err, h("button", { type: "submit" }, "Se connecter"));
     return form;
-  }
-  function forgotView() {
-    const err = h("p", { class: "err", role: "alert" }), done = h("p", { class: "ok", role: "status" });
-    const email = h("input", { type: "email", required: true, autocomplete: "username" });
-    const btn = h("button", { type: "submit" }, "Envoyer le lien");
-    return h("form", { class: "card login", onsubmit: async (e) => {
-      e.preventDefault(); err.textContent = ""; done.textContent = ""; btn.disabled = true;
-      try {
-        const r = await api("/api/auth?a=forgot", "POST", { email: email.value });
-        if (r.mail === false) err.textContent = "L’envoi d’e-mails n’est pas encore configuré sur ce site (variables RESEND_API_KEY et MAIL_FROM). Contactez l’hébergeur du site.";
-        else done.textContent = "Si un compte administrateur correspond à cette adresse, un lien de réinitialisation vient d’être envoyé (valable 30 minutes). Pensez à vérifier vos courriers indésirables.";
-      } catch (x) { err.textContent = x.message; }
-      btn.disabled = false;
-    } }, h("h1", {}, "Mot de passe oublié"), h("p", { class: "muted" }, "Saisissez votre e-mail : nous vous enverrons un lien pour choisir un nouveau mot de passe."),
-      field("E-mail", email), done, err, btn,
-      h("p", { style: "margin:14px 0 0;text-align:center" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); window._authMode = null; render(); } }, "Retour à la connexion")));
-  }
-  function resetView(token) {
-    const err = h("p", { class: "err", role: "alert" });
-    const p1 = h("input", { type: "password", required: true, minlength: 12, autocomplete: "new-password" }), p2 = h("input", { type: "password", required: true, minlength: 12, autocomplete: "new-password" });
-    const code = h("input", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: 8, placeholder: "123456" });
-    const codeBox = h("div", { hidden: true }, h("br"), field("Code de double authentification", code));
-    return h("form", { class: "card login", onsubmit: async (e) => {
-      e.preventDefault(); err.textContent = "";
-      if (p1.value !== p2.value) { err.textContent = "Les deux mots de passe ne correspondent pas."; return; }
-      try {
-        await api("/api/auth?a=reset", "POST", { token, password: p1.value, code: code.value });
-        history.replaceState(null, "", location.pathname); window._authMode = null; window._authNote = "Mot de passe modifié. Connectez-vous avec le nouveau.";
-        render();
-      } catch (x) { err.textContent = x.message; if (x.data && x.data.needCode) { codeBox.hidden = false; code.focus(); } }
-    } }, h("h1", {}, "Nouveau mot de passe"), h("p", { class: "muted" }, "Choisissez un mot de passe d’au moins 12 caractères."),
-      field("Nouveau mot de passe", p1), h("br"), field("Confirmer", p2), codeBox, err, h("button", { type: "submit" }, "Enregistrer le mot de passe"),
-      h("p", { style: "margin:14px 0 0;text-align:center" }, h("a", { href: "#", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", location.pathname); window._authMode = null; render(); } }, "Retour à la connexion")));
   }
 
   async function load() {
@@ -208,28 +169,26 @@
       h("div", {}, h("strong", {}, p.title), " ", h("span", { class: "pill" }, p.archived ? "Archivée" : p.published ? "Publié" : "Masqué"), " ", h("span", { class: "pill" }, AVL[p.availability] || "Disponible"), h("br"),
         h("span", { class: "muted" }, p.location + " · " + new Intl.NumberFormat("fr-FR").format(p.price) + " " + p.currencySymbol + (p.priceSuffix || ""))),
       h("div", { class: "row" },
-        p.archived ? "" : h("button", { class: "ghost", onclick: () => { tab = "form"; window._edit = p; render(); } }, "Modifier"),
-        p.archived
-          ? h("button", { class: "ghost", onclick: async () => { try { await api("/api/properties?id=" + encodeURIComponent(p.id), "PATCH", { archived: false }); await refresh(); } catch (x) { alert(x.message); } } }, "Restaurer")
-          : h("button", { class: "danger", onclick: async () => {
-            if (!confirm("Supprimer « " + p.title + " » ? Elle sera retirée du site et placée dans les archives, d’où vous pourrez la restaurer.")) return;
-            try { await api("/api/properties?id=" + encodeURIComponent(p.id), "PATCH", { archived: true }); await refresh(); } catch (x) { alert(x.message); }
-          } }, "Supprimer"),
-        p.archived && me.role === "super_admin" ? h("button", { class: "danger", onclick: async () => {
-          if (!confirm("Supprimer DÉFINITIVEMENT « " + p.title + " » ? Cette action est irréversible.")) return;
+        h("button", { class: "ghost", onclick: () => { tab = "form"; window._edit = p; render(); } }, "Modifier"),
+        h("button", { class: "ghost", onclick: async () => {
+          if (!p.archived && !confirm("Archiver « " + p.title + " » ? Elle disparaît du site mais reste restaurable à tout moment.")) return;
+          try { await api("/api/properties?id=" + encodeURIComponent(p.id), "PATCH", { archived: !p.archived }); await refresh(); } catch (x) { alert(x.message); }
+        } }, p.archived ? "Restaurer" : "Archiver"),
+        h("button", { class: "danger", onclick: async () => {
+          if (!confirm("Supprimer définitivement « " + p.title + " » ? Cette action est irréversible (pour la garder, utilisez plutôt Archiver).")) return;
           try { await api("/api/properties?id=" + encodeURIComponent(p.id), "DELETE"); await refresh(); } catch (x) { alert(x.message); }
-        } }, "Supprimer définitivement") : ""));
+        } }, "Supprimer")));
   }
 
   let propFilter = "active";
   function listView() {
     const nArch = props.filter((p) => p.archived).length;
     const shown = props.filter((p) => (propFilter === "all" ? true : propFilter === "archived" ? p.archived : !p.archived));
-    const bar = h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...[["active", "Actives (" + (props.length - nArch) + ")"], ["archived", "Archives (" + nArch + ")"], ["all", "Toutes (" + props.length + ")"]]
+    const bar = h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...[["active", "Actives (" + (props.length - nArch) + ")"], ["archived", "Archivées (" + nArch + ")"], ["all", "Toutes (" + props.length + ")"]]
       .map(([k, l]) => h("button", { class: k === propFilter ? "" : "ghost", onclick: () => { propFilter = k; render(); } }, l)));
     return h("div", {}, h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, shown.length + " annonce(s)"),
       h("button", { onclick: () => { tab = "form"; window._edit = null; render(); } }, "+ Ajouter")), bar,
-      ...(shown.length ? shown.map(propRow) : [h("p", { class: "muted" }, propFilter === "archived" ? "Les archives sont vides." : "Aucune annonce dans cette catégorie.")]));
+      ...(shown.length ? shown.map(propRow) : [h("p", { class: "muted" }, "Aucune annonce dans cette catégorie.")]));
   }
 
   // Carte du tableau de bord : gérer les maisons sans quitter la page d'accueil de l'administration
@@ -238,7 +197,7 @@
     return h("div", { class: "card" }, h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", { style: "margin:0" }, "Gérer les maisons"),
       h("button", { onclick: () => { tab = "form"; window._edit = null; render(); } }, "+ Ajouter une maison")),
       ...(live.length ? live.slice(0, 5).map(propRow) : [h("p", { class: "muted" }, "Aucune annonce active.")]),
-      h("div", { class: "row" }, h("span", { class: "muted" }, (props.length - live.length) + " dans les archives"),
+      h("div", { class: "row" }, h("span", { class: "muted" }, (props.length - live.length) + " archivée(s)"),
         h("button", { class: "ghost", onclick: () => { tab = "annonces"; render(); } }, "Toutes les annonces (" + props.length + ")")));
   }
 
@@ -317,24 +276,14 @@
         h("button", { class: "ghost", onclick: () => { const p = prompt("Nouveau mot de passe pour " + c.email + " (8 caractères min.)"); if (p) act(async () => { await api(url, "PATCH", { password: p }); alert("Mot de passe modifié. Le client a été déconnecté."); }); } }, "Mot de passe"),
         c.online ? h("button", { class: "ghost", onclick: () => { if (confirm("Déconnecter " + c.name + " maintenant ?")) act(() => api(url, "PATCH", { disconnect: true })); } }, "Déconnecter") : "",
         h("button", { class: c.active ? "danger" : "ghost", onclick: () => act(() => api(url, "PATCH", { active: !c.active })) }, c.active ? "Désactiver" : "Réactiver"),
-        h("button", { class: "danger", onclick: () => { if (confirm("Supprimer le compte de " + c.name + " (" + c.email + ") ? Il sera placé dans les archives (connexion bloquée) et vous pourrez le restaurer.")) act(() => api(url, "PATCH", { archived: true })); } }, "Supprimer"))));
-    if (c.archived_at) box.replaceChildren(h("div", { class: "row archived" },
-      h("div", {}, h("strong", {}, c.name), " ", h("span", { class: "pill" }, "Archivé"), h("br"), h("span", { class: "muted" }, c.email + " · " + c.orders + " demande(s) · inscrit le " + when(c.created_at))),
-      h("div", { class: "row" },
-        h("button", { class: "ghost", onclick: () => act(() => api(url, "PATCH", { archived: false })) }, "Restaurer"),
-        h("button", { class: "danger", onclick: () => { if (confirm("Supprimer DÉFINITIVEMENT le compte de " + c.name + " avec ses demandes et son historique ? Irréversible.")) act(() => api(url, "DELETE")); } }, "Supprimer définitivement"))));
+        h("button", { class: "danger", onclick: () => { if (confirm("Supprimer définitivement le compte de " + c.name + " (" + c.email + ") avec ses demandes et son historique ? Irréversible.")) act(() => api(url, "DELETE")); } }, "Supprimer"))));
     view();
     return box;
   }
-  let custFilter = "active";
   function customersView() {
-    const bar = h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...[["active", "Comptes actifs"], ["archived", "Archives"]]
-      .map(([k, l]) => h("button", { class: k === custFilter ? "" : "ghost", onclick: () => { custFilter = k; render(); } }, l)));
-    const list = lazy("/api/console?a=customers" + (custFilter === "archived" ? "&archived=1" : ""), (rows, reload) => [
-      h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, custFilter === "archived" ? rows.length + " compte(s) archivé(s)" : rows.length + " client(s) inscrit(s)"),
-        custFilter === "archived" ? "" : h("span", { class: "muted" }, rows.filter((c) => c.online).length + " en ligne")),
-      ...(rows.length ? rows.map((c) => customerCard(c, reload)) : [h("p", { class: "muted" }, "Aucun compte ici.")])]);
-    return h("div", {}, bar, list);
+    return lazy("/api/console?a=customers", (rows, reload) => [
+      h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", {}, rows.length + " client(s) inscrit(s)"), h("span", { class: "muted" }, rows.filter((c) => c.online).length + " en ligne")),
+      ...rows.map((c) => customerCard(c, reload))]);
   }
   function activityView() {
     const q = window._cust ? "&customer=" + window._cust : "";
@@ -654,50 +603,37 @@
     return h("div", {}, h("div", { class: "tabs-in" }, ...tabs.map(([k, l]) => h("button", { class: k === supTab ? "" : "ghost", onclick: () => { supTab = k; render(); } }, l))), h("div", { style: "margin-top:14px" }, body));
   }
 
-  // Modules regroupés : un seul accès dans le menu, des onglets à l'intérieur
-  const SUBS = {
-    clients: [["clients", "Comptes"], ["activity", "Activité"]],
-    chat: [["chat", "Messagerie", "chat"], ["messages", "Formulaire de contact"], ["suggestions", "Suggestions", "suggestions"], ["notifs", "Notifications", "notifications"]],
-    admins: [["admins", "Administrateurs"], ["audit", "Journal de sécurité"]]
-  };
-  const MODULE = {}; for (const [m, subs] of Object.entries(SUBS)) subs.forEach(([id]) => { MODULE[id] = m; });
-  const subBar = () => {
-    const m = MODULE[tab];
-    return m ? h("div", { class: "tabs-in", style: "margin-bottom:14px" }, ...SUBS[m].map(([id, l, cnt]) => h("button", { class: id === tab ? "" : "ghost", onclick: () => { tab = id; render(); } }, l, cnt && counts[cnt] ? h("span", { class: "badge" }, String(counts[cnt])) : ""))) : "";
-  };
   const NAV = (sup) => [
-    ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
-    ["Système", [["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
+    ["Pilotage", [["dashboard", "Tableau de bord"]]],
+    ["Gestion", [["annonces", "Annonces"], ["orders", "Commandes", "pendingOrders"], ["clients", "Clients", null, 1]]],
+    ["Communication", [["chat", "Messagerie", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Messages reçus"], ["suggestions", "Suggestions", "suggestions"]]],
+    ["Supervision", [["supervision", "Supervision", null, 1]]],
+    ["Contrôle", [["activity", "Activité des clients", null, 1], ["admins", "Administrateurs", null, 1], ["audit", "Journal de sécurité", null, 1], ["profile", "Mon profil"]]]
   ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
 
   async function render() {
     stopPoll();
-    if (!me || /^#reset=/.test(location.hash)) { app.replaceChildren(loginView()); return; }
+    if (!me) { app.replaceChildren(loginView()); return; }
     try { counts = await api("/api/console?a=counts"); } catch (e) {}
     const sup = me.role === "super_admin";
-    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), h("span", { class: "brand-t" }, "Maison", h("small", {}, "Location et vente immobilière"))));
+    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), h("span", { class: "brand-t" }, "Location et vente immobilière", h("small", {}, "Administration"))));
     for (const [g, items] of NAV(sup)) {
       nav.append(h("div", { class: "grp" }, g));
       for (const [id, label, cnt] of items) {
-        const n = cnt ? cnt.reduce((t, k) => t + (counts[k] || 0), 0) : 0;
-        nav.append(h("button", { class: "nav" + ((MODULE[tab] || tab) === id || (tab === "form" && id === "annonces") ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""));
+        const n = cnt ? counts[cnt] : 0;
+        nav.append(h("button", { class: "nav" + (tab === id || (tab === "form" && id === "annonces") ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, h("span", {}, label), n ? h("span", { class: "badge" }, String(n)) : ""));
       }
     }
-    const logout = async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); };
-    nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", { class: "who-txt" }, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur"))),
-      h("span", { class: "who-mail", title: me.email }, me.email),
-      h("a", { class: "btn ghost who-btn", href: "/" }, "Voir le site"), h("button", { class: "ghost who-btn", onclick: logout }, "Se déconnecter")));
+    nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur")))));
     const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
       : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
-    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
+    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", clients: "Clients", chat: "Messagerie", notifs: "Notifications", messages: "Messages reçus", suggestions: "Suggestions", activity: "Activité des clients", admins: "Administrateurs", audit: "Journal de sécurité", supervision: "Supervision", profile: "Mon profil" };
     app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },
-      h("header", { class: "top" }, h("h1", {}, titles[MODULE[tab] || tab] || "Tableau de bord"), h("div", { class: "row top-acts" },
-        h("a", { class: "btn ghost", href: "/" }, "Voir le site"), h("button", { class: "ghost", onclick: logout }, "Déconnexion"))),
-      h("div", { class: "content" }, subBar(), body))));
-    const on = nav.querySelector(".nav.on"); // barre du bas (mobile) : garder l'onglet actif visible
-    if (on && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+      h("header", { class: "top" }, h("h1", {}, titles[tab] || "Tableau de bord"), h("div", { class: "row" },
+        h("a", { class: "btn ghost", href: "/" }, "Voir le site"), h("button", { class: "ghost", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),
+      h("div", { class: "content" }, body))));
   }
 
   api("/api/auth?a=me").then(async (r) => { me = r.user; tab = "dashboard"; await load(); render(); }).catch(() => render());

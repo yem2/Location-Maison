@@ -119,7 +119,7 @@
     app.className = "dash";
     app.replaceChildren(
       h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
-        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email))),
+        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name))), h("small", { class: "muted su-mail" }, me.email),
           h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
       h("div", { class: "main" },
         h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
@@ -352,41 +352,8 @@
         e.preventDefault(); err.textContent = ""; btn.disabled = true;
         try { const r = await api("/api/customer?a=login", "POST", { email: email.value, password: pw.value }); me = r.customer; await start(); }
         catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("E-mail", email), field("Mot de passe", pw), err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "#forgot", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte#forgot"); showForgot(); } }, "Mot de passe oublié ?")))),
+      } }, field("E-mail", email), field("Mot de passe", pw), err, btn)),
       h("p", { class: "muted" }, "Pas encore de compte ? ", h("a", { href: "/" }, "Retour au site"), " puis « Se connecter » → « Créer un compte ».")));
-  }
-
-  // ---------- Mot de passe oublié ----------
-  function showForgot() {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const email = h("input", { type: "email", autocomplete: "email", required: true }), err = h("p", { class: "err", role: "alert" }, ""), done = h("p", { class: "muted", role: "status" }, "");
-    const btn = h("button", { class: "btn", type: "submit" }, "Envoyer le lien");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Mot de passe oublié"),
-      h("p", { class: "muted" }, "Saisissez l’e-mail de votre compte : nous vous enverrons un lien pour choisir un nouveau mot de passe."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = ""; done.textContent = ""; btn.disabled = true;
-        try {
-          const r = await api("/api/customer?a=forgot", "POST", { email: email.value });
-          if (r.mail === false) err.textContent = "L’envoi d’e-mails n’est pas encore disponible. Contactez-nous : un administrateur peut réinitialiser votre mot de passe.";
-          else done.textContent = "Si un compte correspond à cette adresse, un lien de réinitialisation vient d’être envoyé (valable 30 minutes). Pensez à vérifier vos courriers indésirables.";
-        } catch (x) { err.textContent = x.message; }
-        btn.disabled = false;
-      } }, field("E-mail", email), done, err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "/compte", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte"); showLogin(); } }, "Retour à la connexion"))))));
-  }
-  function showReset(token) {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const p1 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 }), p2 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 });
-    const err = h("p", { class: "err", role: "alert" }, ""), btn = h("button", { class: "btn", type: "submit" }, "Enregistrer le mot de passe");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Nouveau mot de passe"), h("p", { class: "muted" }, "Choisissez un mot de passe d’au moins 8 caractères."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = "";
-        if (p1.value !== p2.value) { err.textContent = "Les deux mots de passe ne correspondent pas."; return; }
-        btn.disabled = true;
-        try { await api("/api/customer?a=reset", "POST", { token, password: p1.value }); me = null; history.replaceState(null, "", "/compte"); showLogin("Mot de passe modifié. Connectez-vous avec le nouveau."); }
-        catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("Nouveau mot de passe", p1), field("Confirmer", p2), err, btn))));
   }
 
   async function start() {
@@ -410,8 +377,5 @@
   }
 
   window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (me && VIEWS[id] && id !== view) { view = id; render(); } });
-  const resetTk = (location.hash.match(/^#reset=([a-f0-9]{64})$/) || [])[1];
-  if (resetTk) showReset(resetTk);
-  else if (location.hash === "#forgot") showForgot();
-  else api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
+  api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
 })();

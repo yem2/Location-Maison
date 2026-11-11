@@ -87,7 +87,6 @@
       err, h("button", { type: "submit", class: "acc-primary" }, signup ? "Créer mon compte" : "Se connecter"));
     if (f.email && window._accEmail) f.email.value = window._accEmail;
     return h("div", {}, h("h2", {}, signup ? "Créer un compte" : "Connexion"), note ? h("p", { class: "acc-note" }, note) : "", form,
-      signup ? "" : h("p", { class: "acc-switch" }, h("a", { href: "/compte#forgot", class: "acc-link" }, "Mot de passe oublié ?")),
       h("p", { class: "acc-switch" }, signup ? "Déjà un compte ? " : "Pas encore de compte ? ",
         h("button", { type: "button", class: "acc-link", onclick: () => { window._accEmail = f.email.value; render(signup ? "login" : "signup"); } }, signup ? "Se connecter" : "Créer un compte")));
   }

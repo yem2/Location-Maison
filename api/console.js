@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -7,27 +7,23 @@ async function handler(req, res) {
   const isSuper = me.role === "super_admin";
 
   if (a === "counts") {
-    const [[n], [o], [ch], [sg]] = await sql.transaction([
-      sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`,
-      sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`,
-      sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`,
-      sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`
-    ], { readOnly: true }); // un seul aller-retour vers la base
+    const [n] = await sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`;
+    const [o] = await sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`;
+    const [ch] = await sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`;
+    const [sg] = await sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`;
     return send(res, 200, { notifications: n.n, pendingOrders: o.n, chat: ch.n, suggestions: sg.n });
   }
   if (a === "stats") {
-    const [[p], [c], [o], [m], revenue, days, recent] = await sql.transaction([
-      sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`,
-      sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM customers`,
-      sql`SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'confirmed')::int AS confirmed, count(*) FILTER (WHERE status = 'rejected')::int AS rejected, count(*) FILTER (WHERE payment_status = 'cash_pending')::int AS cash_pending FROM orders`,
-      sql`SELECT count(*) FILTER (WHERE NOT is_read)::int AS unread FROM messages`,
-      sql`SELECT currency, sum(amount)::float AS total FROM orders WHERE payment_status = 'paid' GROUP BY currency ORDER BY total DESC`,
-      sql`SELECT to_char(d, 'DD/MM') AS day,
+    const [p] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`;
+    const [c] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS week FROM customers`;
+    const [o] = await sql`SELECT count(*) FILTER (WHERE status = 'pending')::int AS pending, count(*) FILTER (WHERE status = 'confirmed')::int AS confirmed, count(*) FILTER (WHERE status = 'rejected')::int AS rejected, count(*) FILTER (WHERE payment_status = 'cash_pending')::int AS cash_pending FROM orders`;
+    const [m] = await sql`SELECT count(*) FILTER (WHERE NOT is_read)::int AS unread FROM messages`;
+    const revenue = await sql`SELECT currency, sum(amount)::float AS total FROM orders WHERE payment_status = 'paid' GROUP BY currency ORDER BY total DESC`;
+    const days = await sql`SELECT to_char(d, 'DD/MM') AS day,
       (SELECT count(*)::int FROM activity a WHERE a.created_at::date = d::date) AS actions,
       (SELECT count(*)::int FROM orders x WHERE x.created_at::date = d::date) AS orders
-      FROM generate_series(current_date - 13, current_date, interval '1 day') AS d ORDER BY d`,
-      sql`SELECT type, title, detail, created_at FROM admin_notifications ORDER BY created_at DESC LIMIT 6`
-    ], { readOnly: true }); // un seul aller-retour vers la base
+      FROM generate_series(current_date - 13, current_date, interval '1 day') AS d ORDER BY d`;
+    const recent = await sql`SELECT type, title, detail, created_at FROM admin_notifications ORDER BY created_at DESC LIMIT 6`;
     return send(res, 200, { properties: p, customers: c, orders: o, messagesUnread: m.unread, revenue, days, recent });
   }
   if (a === "suggestions") {
@@ -56,14 +52,6 @@ async function handler(req, res) {
         if (!b.active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, b.active ? "customer.enable" : "customer.disable", String(id));
       }
-      if (typeof b.archived === "boolean") {
-        if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
-        if (b.archived) {
-          await sql`UPDATE customers SET archived_at = now(), active = false WHERE id = ${id}`;
-          await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
-        } else await sql`UPDATE customers SET archived_at = NULL, active = true WHERE id = ${id}`;
-        await audit(me.id, b.archived ? "customer.archive" : "customer.restore", c.email);
-      }
       if (b.disconnect === true) {
         await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, "customer.disconnect", c.email);
@@ -86,10 +74,8 @@ async function handler(req, res) {
     }
     if (req.method === "DELETE") {
       const id = Number(req.query.id) || 0;
-      await ensureSchema();
-      const [c] = await sql`SELECT id, email, archived_at FROM customers WHERE id = ${id}`;
+      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
       if (!c) return send(res, 404, { error: "Client introuvable." });
-      if (!c.archived_at) return send(res, 409, { error: "Mettez d’abord le compte dans les archives, puis supprimez-le définitivement." });
       const [p] = await sql`SELECT count(*)::int AS n FROM orders WHERE customer_id = ${id} AND payment_status = 'paid'`;
       if (p.n) return send(res, 409, { error: "Ce client a des acomptes payés : désactivez son compte plutôt que de le supprimer (la comptabilité est conservée)." });
       try {
@@ -106,13 +92,11 @@ async function handler(req, res) {
       await audit(me.id, "customer.delete", c.email);
       return send(res, 200, { ok: true });
     }
-    await ensureSchema();
-    const arch = req.query.archived === "1";
-    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen, c.archived_at,
+    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen,
       EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes' AS online,
       (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
       (SELECT count(*)::int FROM activity x WHERE x.customer_id = c.id) AS actions
-      FROM customers c WHERE (c.archived_at IS NOT NULL) = ${arch} ORDER BY c.created_at DESC LIMIT 500`);
+      FROM customers c ORDER BY c.created_at DESC LIMIT 500`);
   }
   if (a === "activity") {
     const cid = Number(req.query.customer) || 0;
