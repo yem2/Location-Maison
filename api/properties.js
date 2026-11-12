@@ -38,14 +38,19 @@ async function handler(req, res) {
     const rows = all
       ? await sql`SELECT * FROM properties ORDER BY position, created_at`
       : await sql`SELECT * FROM properties WHERE published ORDER BY position, created_at`;
-    if (!all) res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
+    res.setHeader("Cache-Control", all ? "private, no-store" : "public, s-maxage=30, stale-while-revalidate=120");
     return send(res, 200, rows.map(toFront));
   }
   const user = await requireUser(req, res);
   if (!user) return;
 
   if (req.method === "DELETE") {
+    if (user.role !== "super_admin") return send(res, 403, { error: "La suppression définitive est réservée au super administrateur." });
+    if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
     const id = str(req.query.id, 80);
+    const [x] = await sql`SELECT archived FROM properties WHERE id = ${id}`;
+    if (!x) return send(res, 404, { error: "Annonce introuvable." });
+    if (!x.archived) return send(res, 409, { error: "Mettez d’abord l’annonce dans les archives, puis supprimez-la définitivement." });
     await sql`DELETE FROM properties WHERE id = ${id}`;
     await audit(user.id, "property.delete", id);
     return send(res, 200, { ok: true });
