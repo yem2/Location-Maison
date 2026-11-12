@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -52,6 +52,14 @@ async function handler(req, res) {
         if (!b.active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, b.active ? "customer.enable" : "customer.disable", String(id));
       }
+      if (typeof b.archived === "boolean") {
+        if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
+        if (b.archived) {
+          await sql`UPDATE customers SET archived_at = now(), active = false WHERE id = ${id}`;
+          await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
+        } else await sql`UPDATE customers SET archived_at = NULL, active = true WHERE id = ${id}`;
+        await audit(me.id, b.archived ? "customer.archive" : "customer.restore", c.email);
+      }
       if (b.disconnect === true) {
         await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, "customer.disconnect", c.email);
@@ -74,8 +82,10 @@ async function handler(req, res) {
     }
     if (req.method === "DELETE") {
       const id = Number(req.query.id) || 0;
-      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
+      await ensureSchema();
+      const [c] = await sql`SELECT id, email, archived_at FROM customers WHERE id = ${id}`;
       if (!c) return send(res, 404, { error: "Client introuvable." });
+      if (!c.archived_at) return send(res, 409, { error: "Mettez d’abord le compte dans les archives, puis supprimez-le définitivement." });
       const [p] = await sql`SELECT count(*)::int AS n FROM orders WHERE customer_id = ${id} AND payment_status = 'paid'`;
       if (p.n) return send(res, 409, { error: "Ce client a des acomptes payés : désactivez son compte plutôt que de le supprimer (la comptabilité est conservée)." });
       try {
@@ -92,11 +102,13 @@ async function handler(req, res) {
       await audit(me.id, "customer.delete", c.email);
       return send(res, 200, { ok: true });
     }
-    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen,
+    await ensureSchema();
+    const arch = req.query.archived === "1";
+    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen, c.archived_at,
       EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes' AS online,
       (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
       (SELECT count(*)::int FROM activity x WHERE x.customer_id = c.id) AS actions
-      FROM customers c ORDER BY c.created_at DESC LIMIT 500`);
+      FROM customers c WHERE (c.archived_at IS NOT NULL) = ${arch} ORDER BY c.created_at DESC LIMIT 500`);
   }
   if (a === "activity") {
     const cid = Number(req.query.customer) || 0;

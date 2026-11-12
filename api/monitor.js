@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { sql, send, requireUser, throttle, notifyAdmins, clientIp, sameOrigin, audit, str, wrap } from "./_lib.js";
+import { sql, send, requireUser, throttle, notifyAdmins, clientIp, sameOrigin, audit, str, ensureSchema, wrap } from "./_lib.js";
 
 const BOOT = Date.now();
 const ROOT = process.cwd();
@@ -118,7 +118,7 @@ async function deployments() {
   const d = await r.json();
   return { configured: true, list: (d.deployments || []).map((x) => ({ state: x.state || x.readyState, target: x.target || "preview", created: x.created || x.createdAt, commit: (x.meta?.githubCommitMessage || "").slice(0, 100), sha: (x.meta?.githubCommitSha || "").slice(0, 7), author: x.meta?.githubCommitAuthorLogin || x.creator?.username || "" })) };
 }
-const ENV_CHECKS = [["DATABASE_URL", "Base de données Neon"], ["APP_SECRET", "Clé de chiffrement 2FA"], ["FLW_SECRET_KEY", "Paiement en ligne (Flutterwave)"], ["FLW_WEBHOOK_HASH", "Secret du webhook de paiement"], ["WA_ACCESS_TOKEN", "WhatsApp (jeton)"], ["WA_PHONE_ID", "WhatsApp (numéro)"], ["WA_TEMPLATE", "WhatsApp (modèle)"], ["CRON_SECRET", "Contrôle automatique quotidien"], ["SUPERVISION_VERCEL_TOKEN", "Suivi des déploiements Vercel"]];
+const ENV_CHECKS = [["DATABASE_URL", "Base de données Neon"], ["APP_SECRET", "Clé de chiffrement 2FA"], ["FLW_SECRET_KEY", "Paiement en ligne (Flutterwave)"], ["FLW_WEBHOOK_HASH", "Secret du webhook de paiement"], ["WA_ACCESS_TOKEN", "WhatsApp (jeton)"], ["WA_PHONE_ID", "WhatsApp (numéro)"], ["WA_TEMPLATE", "WhatsApp (modèle)"], ["CRON_SECRET", "Contrôle automatique quotidien"], ["SUPERVISION_VERCEL_TOKEN", "Suivi des déploiements Vercel"], ["RESEND_API_KEY", "E-mails (mot de passe oublié) : clé Resend"], ["MAIL_FROM", "E-mails : adresse d’expédition"], ["SITE_URL", "Adresse du site pour les liens e-mail"]];
 
 async function dbLatency() { const t0 = Date.now(); await sql`SELECT 1`; return Date.now() - t0; }
 
@@ -188,12 +188,13 @@ async function handler(req, res) {
 
   // Présence : un utilisateur est « en ligne » s'il a une session valide et une activité de moins de 5 minutes
   if (a === "users") {
+    await ensureSchema();
     const admins = await sql`SELECT u.id, u.name, u.email, u.role, u.active, u.last_seen,
       (EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = u.id AND s.expires_at > now()) AND u.last_seen > now() - interval '5 minutes') AS online
       FROM users u ORDER BY (u.role = 'super_admin') DESC, u.created_at`;
     const customers = await sql`SELECT c.id, c.name, c.email, c.active, c.last_seen, c.last_login,
       (EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes') AS online
-      FROM customers c ORDER BY c.last_seen DESC NULLS LAST LIMIT 500`;
+      FROM customers c WHERE c.archived_at IS NULL ORDER BY c.last_seen DESC NULLS LAST LIMIT 500`;
     let avatars = {};
     try { (await sql`SELECT id, avatar FROM users WHERE avatar <> ''`).forEach((r) => { avatars[r.id] = r.avatar; }); } catch { /* colonne absente */ }
     return send(res, 200, {
