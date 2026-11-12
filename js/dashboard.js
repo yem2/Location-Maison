@@ -119,7 +119,7 @@
     app.className = "dash";
     app.replaceChildren(
       h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
-        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email))),
+        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name))), h("small", { class: "muted su-mail" }, me.email),
           h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
       h("div", { class: "main" },
         h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
@@ -163,16 +163,29 @@
           notes.length ? h("p", {}, h("button", { class: "btn ghost sm", type: "button", onclick: () => go("notifications") }, "Tout voir")) : "")));
   }
 
+  async function pay(kind, o, btn, errEl) {
+    btn.disabled = true; errEl.textContent = "";
+    try {
+      const r = await api("/api/pay?a=" + kind, "POST", { orderId: o.id });
+      if (r.link) { window.location.href = r.link; return; }
+      toast("Paiement en espèces enregistré : réglez-le à l’agence.");
+      await reloadOrders(); render();
+    } catch (x) { errEl.textContent = x.message; btn.disabled = false; }
+  }
   function payBlock(o) {
     if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
+    const err = h("p", { class: "err", role: "alert" });
     const box = h("div", { class: "paybox" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
     if (o.payment_status === "paid") box.append(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
-    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
+    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, "Paiement en espèces à régler à l’agence."));
     else {
       if (o.payment_status === "pending") box.append(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
-      box.append(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => window.MaisonPay.open(o, async () => { await reloadOrders(); render(); }) }, "Payer l’acompte")));
+      box.append(h("div", { class: "row" },
+        h("button", { class: "btn", type: "button", disabled: !payCfg.online, title: payCfg.online ? "" : "Paiement en ligne bientôt disponible", onclick: (e) => pay("online", o, e.currentTarget, err) }, "Payer en ligne (Mobile Money, carte)"),
+        h("button", { class: "btn ghost", type: "button", onclick: (e) => pay("cash", o, e.currentTarget, err) }, "Payer en espèces à l’agence")));
+      if (!payCfg.online) box.append(h("small", { class: "muted" }, "Le paiement en ligne n’est pas encore activé."));
     }
-    return box;
+    box.append(err); return box;
   }
   function requests() {
     const groups = { all: () => true, pending: (o) => o.status === "pending", confirmed: (o) => o.status === "confirmed", closed: (o) => ["rejected", "cancelled"].includes(o.status) };
@@ -339,41 +352,8 @@
         e.preventDefault(); err.textContent = ""; btn.disabled = true;
         try { const r = await api("/api/customer?a=login", "POST", { email: email.value, password: pw.value }); me = r.customer; await start(); }
         catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("E-mail", email), field("Mot de passe", pw), err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "#forgot", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte#forgot"); showForgot(); } }, "Mot de passe oublié ?")))),
+      } }, field("E-mail", email), field("Mot de passe", pw), err, btn)),
       h("p", { class: "muted" }, "Pas encore de compte ? ", h("a", { href: "/" }, "Retour au site"), " puis « Se connecter » → « Créer un compte ».")));
-  }
-
-  // ---------- Mot de passe oublié ----------
-  function showForgot() {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const email = h("input", { type: "email", autocomplete: "email", required: true }), err = h("p", { class: "err", role: "alert" }, ""), done = h("p", { class: "muted", role: "status" }, "");
-    const btn = h("button", { class: "btn", type: "submit" }, "Envoyer le lien");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Mot de passe oublié"),
-      h("p", { class: "muted" }, "Saisissez l’e-mail de votre compte : nous vous enverrons un lien pour choisir un nouveau mot de passe."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = ""; done.textContent = ""; btn.disabled = true;
-        try {
-          const r = await api("/api/customer?a=forgot", "POST", { email: email.value });
-          if (r.mail === false) err.textContent = "L’envoi d’e-mails n’est pas encore disponible. Contactez-nous : un administrateur peut réinitialiser votre mot de passe.";
-          else done.textContent = "Si un compte correspond à cette adresse, un lien de réinitialisation vient d’être envoyé (valable 30 minutes). Pensez à vérifier vos courriers indésirables.";
-        } catch (x) { err.textContent = x.message; }
-        btn.disabled = false;
-      } }, field("E-mail", email), done, err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "/compte", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte"); showLogin(); } }, "Retour à la connexion"))))));
-  }
-  function showReset(token) {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const p1 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 }), p2 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 });
-    const err = h("p", { class: "err", role: "alert" }, ""), btn = h("button", { class: "btn", type: "submit" }, "Enregistrer le mot de passe");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Nouveau mot de passe"), h("p", { class: "muted" }, "Choisissez un mot de passe d’au moins 8 caractères."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = "";
-        if (p1.value !== p2.value) { err.textContent = "Les deux mots de passe ne correspondent pas."; return; }
-        btn.disabled = true;
-        try { await api("/api/customer?a=reset", "POST", { token, password: p1.value }); me = null; history.replaceState(null, "", "/compte"); showLogin("Mot de passe modifié. Connectez-vous avec le nouveau."); }
-        catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("Nouveau mot de passe", p1), field("Confirmer", p2), err, btn))));
   }
 
   async function start() {
@@ -397,8 +377,5 @@
   }
 
   window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (me && VIEWS[id] && id !== view) { view = id; render(); } });
-  const resetTk = (location.hash.match(/^#reset=([a-f0-9]{64})$/) || [])[1];
-  if (resetTk) showReset(resetTk);
-  else if (location.hash === "#forgot") showForgot();
-  else api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
+  api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
 })();

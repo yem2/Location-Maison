@@ -1,4 +1,4 @@
-import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk, ensureSchema, mailConfigured, startReset, findReset, burnResets, wrap } from "./_lib.js";
+import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk , wrap } from "./_lib.js";
 
 // Colonnes du profil (ville, présentation, photo) : créées automatiquement si la migration n'a pas été lancée.
 let profileCols;
@@ -122,29 +122,6 @@ async function handler(req, res) {
     await logActivity(c.id, "signup", null, email);
     await notifyAdmins("signup", "Nouveau compte client", `${name} (${email})`, c.id);
     return send(res, 201, { customer: c });
-  }
-
-  if (a === "forgot") {
-    if (!(await throttle(req, res, "cforgot", 5, 3600))) return;
-    const email = str(b.email, 254).toLowerCase();
-    await ensureSchema();
-    const [u] = await sql`SELECT id, email, name FROM customers WHERE email = ${email} AND active`;
-    if (u) await startReset(req, "customer", u, "/compte", "compte client");
-    return send(res, 200, { ok: true, mail: mailConfigured() });
-  }
-  if (a === "reset") {
-    if (!(await throttle(req, res, "creset", 10, 600))) return;
-    const pw = typeof b.password === "string" ? b.password : "";
-    const tk = await findReset("customer", b.token);
-    if (!tk) return send(res, 400, { error: "Ce lien est invalide ou a expiré. Refaites une demande." });
-    if (pw.length < 8 || pw.length > 200) return send(res, 400, { error: "Le mot de passe doit contenir au moins 8 caractères." });
-    const [u] = await sql`SELECT id FROM customers WHERE id = ${tk.account_id} AND active`;
-    if (!u) return send(res, 400, { error: "Ce lien est invalide ou a expiré. Refaites une demande." });
-    await sql`UPDATE customers SET password_hash = ${hashPassword(pw)}, failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
-    await sql`DELETE FROM customer_sessions WHERE customer_id = ${u.id}`;
-    await burnResets("customer", u.id);
-    await logActivity(u.id, "password_reset");
-    return send(res, 200, { ok: true });
   }
 
   if (a === "login") {

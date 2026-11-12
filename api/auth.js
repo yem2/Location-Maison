@@ -1,4 +1,4 @@
-import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone, ensureSchema, mailConfigured, startReset, findReset, burnResets, wrap } from "./_lib.js";
+import { sql, send, throttle, verifyPassword, hashPassword, createSession, destroySession, currentUser, requireUser, sameOrigin, audit, str, encrypt, decrypt, newTotpSecret, verifyTotp, normalizePhone, ensureSchema, wrap } from "./_lib.js";
 
 const AVATAR_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 const DUMMY = "scrypt$16384$8$1$AAAAAAAAAAAAAAAAAAAAAA==$" + "A".repeat(86) + "==";
@@ -21,34 +21,6 @@ async function handler(req, res) {
   }
   if (req.method !== "POST" || !sameOrigin(req)) return send(res, 405, { error: "Méthode refusée" });
   if (a === "logout") { await destroySession(req, res); return send(res, 200, { ok: true }); }
-
-  // Mot de passe oublié : réponse identique que le compte existe ou non (pas de fuite d'information)
-  if (a === "forgot") {
-    if (!(await throttle(req, res, "aforgot", 5, 3600))) return;
-    const email = str(req.body?.email, 254).toLowerCase();
-    const [u] = await sql`SELECT id, email, name FROM users WHERE email = ${email} AND active`;
-    if (u) { await startReset(req, "admin", u, "/admin", "compte administrateur"); await audit(u.id, "password.forgot"); }
-    return send(res, 200, { ok: true, mail: mailConfigured() });
-  }
-  if (a === "reset") {
-    if (!(await throttle(req, res, "areset", 10, 600))) return;
-    const pw = typeof req.body?.password === "string" ? req.body.password : "";
-    const code = str(req.body?.code, 10);
-    const tk = await findReset("admin", req.body?.token);
-    if (!tk) return send(res, 400, { error: "Ce lien est invalide ou a expiré. Refaites une demande." });
-    if (pw.length < 12 || pw.length > 200) return send(res, 400, { error: "Le mot de passe doit contenir au moins 12 caractères." });
-    const [u] = await sql`SELECT * FROM users WHERE id = ${tk.account_id} AND active`;
-    if (!u) return send(res, 400, { error: "Ce lien est invalide ou a expiré. Refaites une demande." });
-    if (u.totp_enabled) {
-      if (!code) return send(res, 401, { needCode: true, error: "Entrez le code à 6 chiffres de votre application d’authentification." });
-      if (!verifyTotp(decrypt(u.totp_secret), code)) return send(res, 401, { needCode: true, error: "Code incorrect." });
-    }
-    await sql`UPDATE users SET password_hash = ${hashPassword(pw)}, failed_logins = 0, locked_until = NULL WHERE id = ${u.id}`;
-    await sql`DELETE FROM sessions WHERE user_id = ${u.id}`;
-    await burnResets("admin", u.id);
-    await audit(u.id, "password.reset");
-    return send(res, 200, { ok: true });
-  }
 
   if (a === "login") {
     if (!(await throttle(req, res, "alogin", 10, 600))) return;

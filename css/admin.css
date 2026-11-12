@@ -59,30 +59,8 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 .card .card{margin-bottom:8px;box-shadow:none}.archived{opacity:.65}
 .msg{position:relative}.msg-del{display:block;margin-top:4px;padding:2px 8px;font-size:.7rem;background:transparent;color:inherit;border:1px solid currentColor;border-radius:8px;opacity:.6}.msg-del:hover{opacity:1}
 
-/* ===== Mobile (iPhone / Android) : menu fixe en bas, plus aucun agrandissement au toucher ===== */
-html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-button,a,select,input,textarea,summary{touch-action:manipulation}
-.tabbar,.sheet-back{display:none}
-@media (max-width:860px){
-  /* iOS agrandit la page quand un champ fait moins de 16 px : on force 16 px */
-  input,select,textarea{font-size:16px}
-  /* La grille s'étirait sur toute la hauteur et gonflait le menu : on la remet en flux normal */
-  .shell{display:block;min-height:0}
-  .side{display:none}
-  .top{padding-top:max(12px,env(safe-area-inset-top))}
-  .top .desk-only{display:none}
-  .content{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
-  .tabbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:30;gap:2px;background:var(--side);border-top:1px solid rgba(255,255,255,.12);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
-  .tb{flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;position:relative;background:none;color:var(--sidei);border-radius:12px;padding:7px 2px;font-size:.68rem;font-weight:500;line-height:1.1;white-space:nowrap}
-  .tb svg{width:22px;height:22px;flex:none}
-  .tb span{max-width:100%;overflow:hidden;text-overflow:ellipsis}
-  .tb.on{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff}
-  .tb-badge{position:absolute;top:2px;right:18%;min-width:18px;padding:0 5px;border-radius:99px;background:#ef4444;color:#fff;font:700 .65rem/18px system-ui,sans-serif;font-style:normal;text-align:center}
-  .sheet-back{display:block;position:fixed;inset:0;z-index:40;background:rgba(5,8,20,.55)}
-  .sheet-back[hidden]{display:none}
-  .sheet{position:absolute;left:0;right:0;bottom:0;display:grid;gap:8px;background:var(--card);border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));max-height:82vh;overflow:auto}
-  .sheet-i{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;padding:13px 14px;border-radius:12px;color:var(--ink);text-decoration:none}
-  .sheet-i.on{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#fff;border-color:transparent}
-  .chat{height:calc(100vh - 260px)}
-  .card .row{align-items:flex-start}
-}
+/* Carte profil et marque : rien ne déborde du cadre (e-mails longs) */
+.who{overflow:hidden}.who-id>div,.who-card>div{min-width:0}
+.who b,.who .who-role,.who small{overflow-wrap:anywhere}
+.brand{line-height:1.2;font-size:1rem}.brand i{flex:none}
+.brand-t{display:grid;gap:2px;min-width:0}.brand-t small{font-weight:500;opacity:.7;font-size:.72rem}

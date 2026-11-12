@@ -46,14 +46,11 @@ export async function destroySession(req, res) {
 export async function currentUser(req) {
   const t = cookie(req, "sid");
   if (!t) return null;
-  // Une seule requête : lit la session ET rafraîchit « dernière activité » (au plus une fois par minute)
-  const rows = await sql`WITH cur AS (
-      SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions ss JOIN users u ON u.id = ss.user_id
-      WHERE ss.token_hash = ${sha(t)} AND ss.expires_at > now() AND u.active
-    ), seen AS (
-      UPDATE users SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
-    ) SELECT * FROM cur`;
-  return rows[0] || null;
+  const rows = await sql`SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions s JOIN users u ON u.id = s.user_id
+    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND u.active`;
+  const u = rows[0] || null;
+  if (u) await sql`UPDATE users SET last_seen = now() WHERE id = ${u.id} AND (last_seen IS NULL OR last_seen < now() - interval '1 minute')`;
+  return u;
 }
 
 // Colonnes ajoutées par migration-superadmin.sql (archivage des biens, profil des administrateurs).
@@ -64,55 +61,11 @@ export function ensureSchema() {
     try {
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
       await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
-      await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
-      await sql`CREATE TABLE IF NOT EXISTS password_resets (
-        id bigserial PRIMARY KEY, kind text NOT NULL, account_id bigint NOT NULL, token_hash text NOT NULL UNIQUE,
-        expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
       return true;
     } catch { return false; }
   })().then((ok) => { if (!ok) schemaP = null; return ok; });
   return schemaP;
 }
-
-// ---------- Mot de passe oublié ----------
-// E-mail envoyé via Resend (variables RESEND_API_KEY et MAIL_FROM). Renvoie false si non configuré ou en échec.
-export const mailConfigured = () => !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
-export async function sendMail(to, subject, text) {
-  if (!mailConfigured()) return false;
-  try {
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST", signal: AbortSignal.timeout(8000),
-      headers: { Authorization: "Bearer " + process.env.RESEND_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject, text })
-    });
-    return r.ok;
-  } catch { return false; }
-}
-const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
-// Adresse du site pour les liens : SITE_URL en priorité (évite toute falsification de l'en-tête Host)
-export const siteUrl = (req) => (process.env.SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? "https://" + process.env.VERCEL_PROJECT_PRODUCTION_URL : "https://" + req.headers.host)).replace(/\/+$/, "");
-
-// Crée un lien à usage unique (30 min) et l'envoie. Silencieux si le compte n'existe pas ou si un e-mail est parti il y a moins de 2 minutes.
-export async function startReset(req, kind, account, path, label) {
-  if (!mailConfigured() || !(await ensureSchema())) return false;
-  const [recent] = await sql`SELECT 1 FROM password_resets WHERE kind = ${kind} AND account_id = ${account.id} AND created_at > now() - interval '2 minutes'`;
-  if (recent) return true;
-  const token = crypto.randomBytes(32).toString("hex");
-  await sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${account.id} AND used_at IS NULL`;
-  await sql`INSERT INTO password_resets (kind, account_id, token_hash, expires_at) VALUES (${kind}, ${account.id}, ${sha256(token)}, now() + interval '30 minutes')`;
-  const link = siteUrl(req) + path + "#reset=" + token;
-  const sent = await sendMail(account.email, "Réinitialisation de votre mot de passe",
-    `Bonjour${account.name ? " " + account.name : ""},\n\nVous avez demandé à réinitialiser le mot de passe de votre ${label}.\nCliquez sur ce lien (valable 30 minutes, utilisable une seule fois) :\n\n${link}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.`);
-  if (!sent) await sql`DELETE FROM password_resets WHERE token_hash = ${sha256(token)}`; // échec d'envoi : on peut redemander tout de suite
-  return sent;
-}
-// Retrouve le compte d'un lien valide (sans le consommer)
-export async function findReset(kind, token) {
-  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token) || !(await ensureSchema())) return null;
-  const [r] = await sql`SELECT id, account_id FROM password_resets WHERE kind = ${kind} AND token_hash = ${sha256(token)} AND used_at IS NULL AND expires_at > now()`;
-  return r || null;
-}
-export const burnResets = (kind, accountId) => sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${accountId} AND used_at IS NULL`;
 
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
@@ -153,13 +106,11 @@ export async function destroyCustomerSession(req, res) {
 export async function currentCustomer(req) {
   const t = cookie(req, "csid");
   if (!t) return null;
-  const rows = await sql`WITH cur AS (
-      SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions cs JOIN customers c ON c.id = cs.customer_id
-      WHERE cs.token_hash = ${sha(t)} AND cs.expires_at > now() AND c.active
-    ), seen AS (
-      UPDATE customers SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
-    ) SELECT * FROM cur`;
-  return rows[0] || null;
+  const rows = await sql`SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions s JOIN customers c ON c.id = s.customer_id
+    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND c.active`;
+  const c = rows[0] || null;
+  if (c) await sql`UPDATE customers SET last_seen = now() WHERE id = ${c.id} AND (last_seen IS NULL OR last_seen < now() - interval '1 minute')`;
+  return c;
 }
 
 export async function requireCustomer(req, res) {
@@ -266,12 +217,10 @@ export function verifyTotp(secret, code) {
 export async function throttle(req, res, key, max, windowSec) {
   const ip = String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "?").trim().slice(0, 64);
   const k = `${key}:${ip}`;
-  if (Math.random() < 0.02) await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`; // nettoyage occasionnel
-  // Une seule requête : compte les essais récents et enregistre celui-ci s'il reste de la place
-  const [r] = await sql`WITH c AS (SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})),
-      i AS (INSERT INTO rate_hits (key) SELECT ${k}::text WHERE (SELECT n FROM c) < ${max}::int RETURNING 1)
-    SELECT (SELECT count(*) FROM i)::int AS added`;
-  if (!r || !r.added) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
+  await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`;
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})`;
+  if (n >= max) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
+  await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
   return true;
 }
 
