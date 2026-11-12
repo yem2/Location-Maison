@@ -155,5 +155,9 @@ a { color: var(--g); }
 .complete-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; } .complete-top h2 { margin: 0; }
 .progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--g), var(--g2)); }
-/* iOS : pas de zoom automatique au focus */
-@media (max-width:860px){input,select,textarea{font-size:16px}}
+
+/* Carte profil : un e-mail long passe à la ligne au lieu de déborder du cadre */
+.side-user { overflow: hidden; }
+.side-user strong { white-space: normal; overflow-wrap: anywhere; }
+.side-user small { display: block; overflow-wrap: anywhere; line-height: 1.35; }
+.side-user .su-mail { font-size: .8rem; }

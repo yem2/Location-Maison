@@ -33,16 +33,27 @@
   }
   const money = (a, c) => new Intl.NumberFormat("fr-FR").format(a) + " " + c;
   let payCfg = { online: false };
-  function payBlock(o) {
+  async function pay(kind, o, btnEl, errEl, reload) {
+    btnEl.disabled = true; errEl.textContent = "";
+    try {
+      const r = await api("/api/pay?a=" + kind, "POST", { orderId: o.id });
+      if (r.link) { window.location.href = r.link; return; }
+      toast("Paiement en espèces enregistré : réglez-le à l’agence."); reload();
+    } catch (x) { errEl.textContent = x.message; btnEl.disabled = false; }
+  }
+  function payBlock(o, reload) {
     if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
     const due = h("div", { class: "acc-pay" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
+    const err = h("p", { class: "acc-err", role: "alert" });
     if (o.payment_status === "paid") due.append(h("div", {}, h("span", { class: "acc-pill acc-confirmed" }, "Payé ✓")));
-    else if (o.payment_status === "cash_pending") due.append(h("div", { class: "acc-note" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
+    else if (o.payment_status === "cash_pending") due.append(h("div", { class: "acc-note" }, "Paiement en espèces à régler à l’agence."));
     else {
       if (o.payment_status === "pending") due.append(h("div", { class: "acc-note" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
-      due.append(h("a", { class: "acc-primary", href: "/compte#demandes", style: "display:block;text-align:center;text-decoration:none" }, "Payer l’acompte"));
+      const online = h("button", { class: "acc-primary", type: "button", disabled: !payCfg.online, title: payCfg.online ? "" : "Paiement en ligne bientôt disponible", onclick: (e) => pay("online", o, e.target, err, reload) }, "Payer en ligne (Mobile Money, Visa, Mastercard)");
+      const cash = h("button", { class: "acc-cash", type: "button", onclick: (e) => pay("cash", o, e.target, err, reload) }, "Payer en espèces à l’agence");
+      due.append(online, cash, payCfg.online ? "" : h("p", { class: "acc-note" }, "Le paiement en ligne n’est pas encore activé."));
     }
-    return due;
+    due.append(err); return due;
   }
   const field = (label, input) => h("label", { class: "acc-field" }, h("span", {}, label), input);
 
@@ -76,7 +87,6 @@
       err, h("button", { type: "submit", class: "acc-primary" }, signup ? "Créer mon compte" : "Se connecter"));
     if (f.email && window._accEmail) f.email.value = window._accEmail;
     return h("div", {}, h("h2", {}, signup ? "Créer un compte" : "Connexion"), note ? h("p", { class: "acc-note" }, note) : "", form,
-      signup ? "" : h("p", { class: "acc-switch" }, h("a", { href: "/compte#forgot", class: "acc-link" }, "Mot de passe oublié ?")),
       h("p", { class: "acc-switch" }, signup ? "Déjà un compte ? " : "Pas encore de compte ? ",
         h("button", { type: "button", class: "acc-link", onclick: () => { window._accEmail = f.email.value; render(signup ? "login" : "signup"); } }, signup ? "Se connecter" : "Créer un compte")));
   }

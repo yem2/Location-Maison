@@ -8,11 +8,10 @@
   if (standalone) return;
 
   const ua = navigator.userAgent || "";
-  const admin = /^\/admin(\/|$)/.test(location.pathname);
   const ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const android = /Android/.test(ua);
   const device = ios ? (/iPad/.test(ua) || navigator.platform === "MacIntel" ? "iPad" : "iPhone") : android ? "téléphone Android" : "ordinateur";
-  const KEY = admin ? "maison-admin-install-dismissed" : "maison-install-dismissed";
+  const KEY = "maison-install-dismissed";
   const recentlyDismissed = () => { try { return Date.now() - Number(localStorage.getItem(KEY) || 0) < 14 * 864e5; } catch (e) { return false; } };
   const remember = () => { try { localStorage.setItem(KEY, String(Date.now())); } catch (e) { /* ignore */ } };
   let deferred = null, banner = null;
@@ -39,7 +38,7 @@
     if (ios) {
       text = el("span", {}, "Touchez ", el("b", {}, "Partager"), " puis ", el("b", {}, "« Sur l’écran d’accueil »"), " pour l’ajouter à votre " + device + ".");
     } else {
-      text = el("span", {}, admin ? "Ouvrez l’administration en un clic depuis votre " + device + ", comme une application." : "Accédez plus vite à vos annonces et à votre espace depuis votre " + device + ".");
+      text = el("span", {}, "Accédez plus vite à vos annonces et à votre espace depuis votre " + device + ".");
       btns.append(el("button", { type: "button", class: "go", onclick: async () => {
         if (!deferred) return;
         deferred.prompt();
@@ -48,7 +47,7 @@
       } }, "Installer"));
     }
     banner = el("div", { class: "inst", role: "region", "aria-label": "Installer l’application" }, style,
-      el("img", { src: "/assets/icons/icon-192.png", alt: "", width: "44", height: "44" }), el("div", {}, el("strong", {}, admin ? "Installer Maison Admin" : "Installer Maison"), text), btns);
+      el("img", { src: "/assets/icons/icon-192.png", alt: "", width: "44", height: "44" }), el("div", {}, el("strong", {}, "Installer Maison"), text), btns);
     document.body.append(banner);
     // Au-dessus de la barre de navigation mobile de l'espace client, s'il y en a une
     const tab = document.querySelector(".tabbar");
