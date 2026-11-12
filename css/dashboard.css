@@ -157,3 +157,6 @@ a { color: var(--g); }
 .progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--g), var(--g2)); }
 /* iOS : pas de zoom automatique au focus */
 @media (max-width:860px){input,select,textarea{font-size:16px}}
+
+/* E-mail trop long : retour à la ligne au lieu de déborder de la carte */
+.side-user{overflow:hidden}.su-id small{display:block;overflow-wrap:anywhere;word-break:break-word;line-height:1.3}

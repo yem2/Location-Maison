@@ -1,16 +1,23 @@
-INSTALLER L'ADMINISTRATION (Android, PC) - 3 fichiers a remplacer / ajouter dans GitHub
+WHATSAPP PAR QR CODE (service géré) + CORRECTIF E-MAIL
 
-  html/admin.html                  remplace l'ancien (ajoute le manifeste + install.js)
-  manifest-admin.webmanifest       NOUVEAU, a la racine du depot
-  js/install.js                    remplace l'ancien (textes "Maison Admin" sur /admin)
+FICHIERS A REMPLACER DANS GITHUB (mêmes chemins) :
+  api/_lib.js        passerelle WhatsApp (utilisée si WA_GATEWAY_URL existe, sinon API Meta)
+  api/console.js     actions wa_status / wa_qr / wa_start / wa_test / wa_logout (super admin)
+  js/admin.js        nouvel onglet "WhatsApp" (Système)
+  css/admin.css      styles de l'onglet
+  css/dashboard.css  l'e-mail long passe à la ligne dans la carte profil client
+(aucune nouvelle fonction Vercel : tout est dans console.js)
 
-vercel.json, dans "headers", ajouter :
-  { "source": "/manifest-admin.webmanifest", "headers": [
-      { "key": "Content-Type", "value": "application/manifest+json" } ] }
+1) SERVEUR WHATSAPP (sur votre VPS Hetzner)
+   - Copiez docker-compose.yml, changez WAHA_API_KEY, lancez : docker compose up -d
+   - Mettez-le derrière Nginx en HTTPS (proxy_pass http://127.0.0.1:3000), ex. wa.votre-domaine
+2) VERCEL > Settings > Environment Variables (type Sensitive), puis redéployer :
+   WA_GATEWAY_URL = https://wa.votre-domaine      (sans / final)
+   WA_GATEWAY_KEY = la même clé que WAHA_API_KEY
+   WA_SESSION     = default                        (facultatif)
+3) Dashboard super admin > Système > WhatsApp > "Générer le QR code", scanner avec
+   WhatsApp > Appareils connectés, puis "Envoyer le test".
 
-INDISPENSABLE AVANT TOUT (sinon rien ne s'installe) :
-  Vercel > projet location_maison > Settings > Deployment Protection
-  > "Vercel Authentication" : DESACTIVER (ou ajouter un nom de domaine personnalise).
-  Tant qu'elle est active, le manifeste et le service worker sont bloques pour tous
-  les visiteurs : ni Android ni PC ne proposent l'installation, et vos clients ne
-  peuvent meme pas ouvrir le site sans compte Vercel.
+REGLES D'ENVOI (inchangées) : message seulement si l'utilisateur a coché WhatsApp, n'est pas
+connecté depuis 5 min et n'a rien reçu depuis 3 min.
+Solution non officielle : le numéro peut être bloqué par WhatsApp. Utilisez un numéro dédié.

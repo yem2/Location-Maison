@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap, gwCall, gwSend, waSession, normalizePhone } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -52,6 +52,14 @@ async function handler(req, res) {
         if (!b.active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, b.active ? "customer.enable" : "customer.disable", String(id));
       }
+      if (typeof b.archived === "boolean") {
+        if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
+        if (b.archived) {
+          await sql`UPDATE customers SET archived_at = now(), active = false WHERE id = ${id}`;
+          await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
+        } else await sql`UPDATE customers SET archived_at = NULL, active = true WHERE id = ${id}`;
+        await audit(me.id, b.archived ? "customer.archive" : "customer.restore", c.email);
+      }
       if (b.disconnect === true) {
         await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, "customer.disconnect", c.email);
@@ -74,8 +82,10 @@ async function handler(req, res) {
     }
     if (req.method === "DELETE") {
       const id = Number(req.query.id) || 0;
-      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
+      await ensureSchema();
+      const [c] = await sql`SELECT id, email, archived_at FROM customers WHERE id = ${id}`;
       if (!c) return send(res, 404, { error: "Client introuvable." });
+      if (!c.archived_at) return send(res, 409, { error: "Mettez d’abord le compte dans les archives, puis supprimez-le définitivement." });
       const [p] = await sql`SELECT count(*)::int AS n FROM orders WHERE customer_id = ${id} AND payment_status = 'paid'`;
       if (p.n) return send(res, 409, { error: "Ce client a des acomptes payés : désactivez son compte plutôt que de le supprimer (la comptabilité est conservée)." });
       try {
@@ -92,11 +102,13 @@ async function handler(req, res) {
       await audit(me.id, "customer.delete", c.email);
       return send(res, 200, { ok: true });
     }
-    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen,
+    await ensureSchema();
+    const arch = req.query.archived === "1";
+    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen, c.archived_at,
       EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes' AS online,
       (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
       (SELECT count(*)::int FROM activity x WHERE x.customer_id = c.id) AS actions
-      FROM customers c ORDER BY c.created_at DESC LIMIT 500`);
+      FROM customers c WHERE (c.archived_at IS NOT NULL) = ${arch} ORDER BY c.created_at DESC LIMIT 500`);
   }
   if (a === "activity") {
     const cid = Number(req.query.customer) || 0;
@@ -104,6 +116,45 @@ async function handler(req, res) {
       ? await sql`SELECT x.id, x.action, x.property_id, x.detail, x.created_at, c.id AS customer_id, c.name, c.email FROM activity x JOIN customers c ON c.id = x.customer_id WHERE x.customer_id = ${cid} ORDER BY x.created_at DESC LIMIT 300`
       : await sql`SELECT x.id, x.action, x.property_id, x.detail, x.created_at, c.id AS customer_id, c.name, c.email FROM activity x JOIN customers c ON c.id = x.customer_id ORDER BY x.created_at DESC LIMIT 300`;
     return send(res, 200, rows);
+  }
+  if (a && a.startsWith("wa_")) {
+    if (!isSuper) return send(res, 403, { error: "Réservé au super administrateur" });
+    if (!process.env.WA_GATEWAY_URL) return send(res, 200, { configured: false, meta: !!process.env.WA_ACCESS_TOKEN });
+    const S = encodeURIComponent(waSession());
+    const STATE = { WORKING: "connected", SCAN_QR_CODE: "qr", STARTING: "starting", FAILED: "failed", STOPPED: "stopped" };
+    try {
+      if (a === "wa_status") {
+        const r = await gwCall(`/api/sessions/${S}`);
+        if (r.status === 404) return send(res, 200, { configured: true, state: "stopped" });
+        if (!r.ok) return send(res, 200, { configured: true, state: "unreachable" });
+        const digits = String(r.json?.me?.id || "").replace(/\D/g, "");
+        return send(res, 200, { configured: true, state: STATE[r.json?.status] || "stopped", name: r.json?.me?.pushName || "", number: digits ? `+${digits.slice(0, 3)} ••• ${digits.slice(-3)}` : "" });
+      }
+      if (a === "wa_qr") {
+        const r = await gwCall(`/api/${S}/auth/qr`);
+        if (!r.ok || !r.json?.data) return send(res, 200, { image: null });
+        return send(res, 200, { image: `data:${r.json.mimetype || "image/png"};base64,${r.json.data}` });
+      }
+      if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
+      if (a === "wa_start") {
+        let r = await gwCall(`/api/sessions/${S}/start`, { method: "POST" });
+        if (r.status === 404) r = await gwCall("/api/sessions/start", { method: "POST", body: { name: waSession() } });
+        await audit(me.id, "whatsapp.start", "");
+        return send(res, 200, { ok: r.ok || r.status === 422 });
+      }
+      if (a === "wa_test") {
+        const to = normalizePhone(req.body?.phone);
+        if (!to) return send(res, 400, { error: "Numéro invalide (avec l'indicatif, ex. +237 699 12 34 56)" });
+        const ok = await gwSend(to, "Maison : message de test envoyé depuis le tableau de bord.");
+        await audit(me.id, "whatsapp.test", "…" + to.slice(-3));
+        return send(res, ok ? 200 : 502, ok ? { ok: true } : { error: "Envoi impossible : le numéro est-il connecté ?" });
+      }
+      if (a === "wa_logout") {
+        const r = await gwCall(`/api/sessions/${S}/logout`, { method: "POST" });
+        await audit(me.id, "whatsapp.logout", "");
+        return send(res, 200, { ok: r.ok });
+      }
+    } catch { return send(res, 502, { error: "Passerelle WhatsApp injoignable" }); }
   }
   send(res, 404, { error: "Inconnu" });
 }

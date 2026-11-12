@@ -429,6 +429,51 @@
     return h("div", {}, h("h2", {}, "Messagerie"), h("div", { class: "chat" }, list, pane));
   }
 
+  // ----- WhatsApp par QR code (service géré) : statut, QR, test, déconnexion -----
+  function whatsappView() {
+    const box = h("div", { class: "card wa" });
+    let busy = false, lastQr = 0, qrImg = null, st = null, note = "", noteErr = false;
+    const phone = h("input", { type: "tel", placeholder: "Numéro de test (ex. +237 699 12 34 56)", autocomplete: "off" });
+    const say = (t, err) => { note = t; noteErr = !!err; draw(); };
+    const act = async (fn) => { if (busy) return; busy = true; draw(); try { await fn(); } catch (e) { say(e.message, true); } busy = false; await refresh(true); };
+    const pill = (cls, t) => h("span", { class: "wa-pill " + cls }, t);
+    function draw() {
+      const head = h("div", { class: "wa-title" }, h("h2", {}, "WhatsApp par QR code"), h("span", { class: "wa-badge" }, "Service géré"));
+      const foot = h("p", { class: "muted wa-note" }, "Solution non officielle : le numéro peut être bloqué par WhatsApp et les messages transitent par le prestataire. Utilisez un numéro dédié à l’entreprise.");
+      const kids = [head];
+      if (!st) kids.push(h("p", { class: "muted" }, "Chargement…"));
+      else if (!st.configured) kids.push(h("p", {}, "Le service n’est pas encore relié au site."), h("p", { class: "muted" }, "Ajoutez WA_GATEWAY_URL et WA_GATEWAY_KEY dans Vercel (voir LISEZ-MOI), puis redéployez." + (st.meta ? " Les notifications passent pour l’instant par l’API Cloud de Meta." : "")));
+      else {
+        const label = { connected: ["wa-ok", "Connecté"], qr: ["wa-warn", "En attente du scan"], starting: ["wa-warn", "Démarrage…"], failed: ["wa-bad", "Échec"], stopped: ["wa-off", "Déconnecté"], unreachable: ["wa-bad", "Service injoignable"] }[st.state] || ["wa-off", "Déconnecté"];
+        kids.push(h("div", { class: "row" }, pill(label[0], label[1]), h("button", { class: "ghost wa-ref", title: "Actualiser", "aria-label": "Actualiser", onclick: () => refresh(true) }, "↻")));
+        if (st.state === "connected") {
+          if (st.number || st.name) kids.push(h("p", { class: "muted" }, [st.name, st.number].filter(Boolean).join(" · ")));
+          kids.push(phone, h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_test", "POST", { phone: phone.value }); say("Message de test envoyé."); }) }, "Envoyer le test"),
+            h("button", { class: "ghost", disabled: busy, onclick: () => { if (confirm("Déconnecter ce numéro de WhatsApp ?")) act(async () => { await api("/api/console?a=wa_logout", "POST", {}); qrImg = null; }); } }, "Déconnecter le numéro"));
+        } else if (st.state === "qr") {
+          kids.push(qrImg ? h("img", { class: "wa-qr", src: qrImg, alt: "QR code WhatsApp", width: 240, height: 240 }) : h("p", { class: "muted" }, "Génération du QR code…"),
+            h("p", { class: "muted" }, "Sur le téléphone : WhatsApp > Paramètres > Appareils connectés > Connecter un appareil, puis scannez ce code."));
+        } else if (st.state !== "unreachable") {
+          kids.push(h("p", { class: "muted" }, "Aucun numéro connecté : les notifications WhatsApp ne partent pas."), h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_start", "POST", {}); }) }, "Générer le QR code"));
+        } else kids.push(h("p", { class: "muted" }, "Le serveur WhatsApp ne répond pas. Vérifiez que le service tourne sur le VPS."));
+      }
+      if (note) kids.push(h("p", { class: noteErr ? "wa-err" : "wa-okmsg", role: "status" }, note));
+      kids.push(foot);
+      box.replaceChildren(...kids);
+    }
+    async function refresh(force) {
+      try {
+        st = await api("/api/console?a=wa_status");
+        if (st.state === "qr" && (force || Date.now() - lastQr > 15000)) { lastQr = Date.now(); const q = await api("/api/console?a=wa_qr"); qrImg = q.image || qrImg; }
+        if (st.state !== "qr") qrImg = null;
+      } catch (e) { st = { configured: true, state: "unreachable" }; }
+      draw();
+    }
+    draw(); refresh(true);
+    const timer = setInterval(() => { if (!box.isConnected) return clearInterval(timer); if (!busy) refresh(false); }, 4000);
+    return box;
+  }
+
   function suggestionsView() {
     return lazy("/api/console?a=suggestions", (rows, reload) => [h("h2", {}, rows.length + " suggestion(s)"), ...rows.map((s) => h("div", { class: "card" + (s.is_read ? "" : " unread") },
       h("div", { class: "row" }, h("strong", {}, s.name || "Client"), h("span", { class: "muted" }, when(s.created_at))), h("div", { class: "muted" }, s.email || ""),
@@ -791,7 +836,7 @@
   };
   const NAV = (sup) => [
     ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["payments", "Paiements", null, 1], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
-    ["Système", [["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
+    ["Système", [["whatsapp", "WhatsApp", null, 1], ["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
   ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
 
   // ----- Menu mobile : barre fixe en bas (ne bouge pas, ne s'étire pas) -----
@@ -830,7 +875,7 @@
     const go = (id) => { tab = id; window._cust = null; render(); };
     const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
-      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "payments" && sup ? paymentsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "payments" && sup ? paymentsView() : tab === "whatsapp" && sup ? whatsappView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
     const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", payments: "Paiements", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
     app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },

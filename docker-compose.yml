@@ -1,0 +1,12 @@
+# À placer sur le VPS (ex. /opt/waha/docker-compose.yml) puis : docker compose up -d
+services:
+  waha:
+    image: devlikeapro/waha
+    restart: always
+    ports: ["127.0.0.1:3000:3000"]        # accessible seulement via Nginx (HTTPS)
+    environment:
+      WAHA_API_KEY: "REMPLACEZ_PAR_UNE_LONGUE_CLE_ALEATOIRE"
+      WHATSAPP_DEFAULT_ENGINE: WEBJS
+      WAHA_DASHBOARD_ENABLED: "false"
+      WHATSAPP_RESTART_ALL_SESSIONS: "True"
+    volumes: ["./sessions:/app/.sessions"]   # garde la connexion après un redémarrage
