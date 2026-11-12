@@ -1,23 +1,17 @@
-WHATSAPP PAR QR CODE (service géré) + CORRECTIF E-MAIL
+WHATSAPP PAR QR CODE (Green API) + CORRECTIF E-MAIL
 
 FICHIERS A REMPLACER DANS GITHUB (mêmes chemins) :
-  api/_lib.js        passerelle WhatsApp (utilisée si WA_GATEWAY_URL existe, sinon API Meta)
-  api/console.js     actions wa_status / wa_qr / wa_start / wa_test / wa_logout (super admin)
-  js/admin.js        nouvel onglet "WhatsApp" (Système)
-  css/admin.css      styles de l'onglet
-  css/dashboard.css  l'e-mail long passe à la ligne dans la carte profil client
-(aucune nouvelle fonction Vercel : tout est dans console.js)
+  api/_lib.js   api/console.js   js/admin.js   css/admin.css   css/dashboard.css
+(aucune nouvelle fonction Vercel)
 
-1) SERVEUR WHATSAPP (sur votre VPS Hetzner)
-   - Copiez docker-compose.yml, changez WAHA_API_KEY, lancez : docker compose up -d
-   - Mettez-le derrière Nginx en HTTPS (proxy_pass http://127.0.0.1:3000), ex. wa.votre-domaine
-2) VERCEL > Settings > Environment Variables (type Sensitive), puis redéployer :
-   WA_GATEWAY_URL = https://wa.votre-domaine      (sans / final)
-   WA_GATEWAY_KEY = la même clé que WAHA_API_KEY
-   WA_SESSION     = default                        (facultatif)
-3) Dashboard super admin > Système > WhatsApp > "Générer le QR code", scanner avec
-   WhatsApp > Appareils connectés, puis "Envoyer le test".
+VERCEL > projet location_maison > Settings > Environment Variables (type Sensitive), puis Redeploy :
+  GREEN_API_ID    = valeur "idInstance" de la console Green API
+  GREEN_API_TOKEN = valeur "apiTokenInstance"
+  GREEN_API_URL   = valeur "apiUrl" (ex. https://7107.api.greenapi.com)   sans / final
 
-REGLES D'ENVOI (inchangées) : message seulement si l'utilisateur a coché WhatsApp, n'est pas
-connecté depuis 5 min et n'a rien reçu depuis 3 min.
-Solution non officielle : le numéro peut être bloqué par WhatsApp. Utilisez un numéro dédié.
+Ensuite : dashboard super admin > Système > WhatsApp > scanner le QR (WhatsApp > Appareils
+connectés) > "Envoyer le test".
+
+SECURITE : ne partagez jamais apiTokenInstance (captures d'écran comprises). S'il a été montré,
+régénérez-le dans la console Green API (icône flèche circulaire à côté du jeton) AVANT de le mettre
+dans Vercel.

@@ -174,7 +174,7 @@ export const logActivity = (customerId, action, propertyId = null, detail = "") 
 
 export async function notifyAdmins(type, title, detail = "", customerId = null) {
   await sql`INSERT INTO admin_notifications (type, title, detail, customer_id) VALUES (${type}, ${String(title).slice(0, 200)}, ${String(detail).slice(0, 400)}, ${customerId})`;
-  if (process.env.WA_ACCESS_TOKEN || process.env.WA_GATEWAY_URL) {
+  if (process.env.WA_ACCESS_TOKEN || waGatewayOn()) {
     const supers = await sql`SELECT id FROM users WHERE role = 'super_admin' AND active`;
     for (const s of supers) await maybeWhatsApp("user", s.id, `${title} — ${detail}`);
   }
@@ -193,17 +193,18 @@ export function normalizePhone(p) {
   return d.length >= 8 && d.length <= 15 ? d : null;
 }
 
-// Passerelle « WhatsApp par QR code » (service géré, type WAHA) : l'URL et la clé restent côté serveur.
-export const waSession = () => process.env.WA_SESSION || "default";
+// Green API (« WhatsApp par QR code », service géré) : identifiants uniquement côté serveur (Vercel).
+export const waGatewayOn = () => !!(process.env.GREEN_API_ID && process.env.GREEN_API_TOKEN);
 export async function gwCall(path, { method = "GET", body, timeout = 8000 } = {}) {
-  const base = String(process.env.WA_GATEWAY_URL || "").replace(/\/+$/, "");
-  if (!base) throw new Error("Passerelle WhatsApp non configurée");
+  if (!waGatewayOn()) throw new Error("Green API non configuré");
+  const base = String(process.env.GREEN_API_URL || "https://api.green-api.com").replace(/\/+$/, "");
+  const id = encodeURIComponent(process.env.GREEN_API_ID), tok = encodeURIComponent(process.env.GREEN_API_TOKEN);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
   try {
-    const r = await fetch(base + path, {
+    const r = await fetch(`${base}/waInstance${id}/${path}/${tok}`, {
       method, signal: ctrl.signal,
-      headers: { "Content-Type": "application/json", Accept: "application/json", "X-Api-Key": process.env.WA_GATEWAY_KEY || "" },
+      headers: body ? { "Content-Type": "application/json" } : {},
       body: body ? JSON.stringify(body) : undefined
     });
     const json = await r.json().catch(() => ({}));
@@ -212,13 +213,13 @@ export async function gwCall(path, { method = "GET", body, timeout = 8000 } = {}
 }
 export async function gwSend(to, text) {
   try {
-    const r = await gwCall("/api/sendText", { method: "POST", timeout: 6000, body: { session: waSession(), chatId: `${to}@c.us`, text: String(text).replace(/\s+/g, " ").slice(0, 900) } });
-    return r.ok;
+    const r = await gwCall("sendMessage", { method: "POST", timeout: 6000, body: { chatId: `${to}@c.us`, message: String(text).replace(/\s+/g, " ").slice(0, 900) } });
+    return r.ok && !!r.json?.idMessage;
   } catch { return false; }
 }
 
 async function waSend(to, text) {
-  if (process.env.WA_GATEWAY_URL) return gwSend(to, "Maison : " + text);
+  if (waGatewayOn()) return gwSend(to, "Maison : " + text);
   const { WA_ACCESS_TOKEN: tok, WA_PHONE_ID: pid, WA_TEMPLATE: tpl } = process.env;
   if (!tok || !pid || !tpl) return false;
   const ctrl = new AbortController();
@@ -236,7 +237,7 @@ async function waSend(to, text) {
 
 export async function maybeWhatsApp(kind, id, text) {
   try {
-    if (!process.env.WA_ACCESS_TOKEN && !process.env.WA_GATEWAY_URL) return;
+    if (!process.env.WA_ACCESS_TOKEN && !waGatewayOn()) return;
     const rows = kind === "customer"
       ? await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM customers WHERE id = ${id}`
       : await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM users WHERE id = ${id}`;

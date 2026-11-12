@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap, gwCall, gwSend, waSession, normalizePhone } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap, gwCall, gwSend, waGatewayOn, normalizePhone } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -119,42 +119,45 @@ async function handler(req, res) {
   }
   if (a && a.startsWith("wa_")) {
     if (!isSuper) return send(res, 403, { error: "Réservé au super administrateur" });
-    if (!process.env.WA_GATEWAY_URL) return send(res, 200, { configured: false, meta: !!process.env.WA_ACCESS_TOKEN });
-    const S = encodeURIComponent(waSession());
-    const STATE = { WORKING: "connected", SCAN_QR_CODE: "qr", STARTING: "starting", FAILED: "failed", STOPPED: "stopped" };
+    if (!waGatewayOn()) return send(res, 200, { configured: false, meta: !!process.env.WA_ACCESS_TOKEN });
+    const STATE = { authorized: "connected", yellowCard: "connected", notAuthorized: "qr", starting: "starting", sleepMode: "starting", blocked: "failed" };
     try {
       if (a === "wa_status") {
-        const r = await gwCall(`/api/sessions/${S}`);
-        if (r.status === 404) return send(res, 200, { configured: true, state: "stopped" });
+        const r = await gwCall("getStateInstance");
         if (!r.ok) return send(res, 200, { configured: true, state: "unreachable" });
-        const digits = String(r.json?.me?.id || "").replace(/\D/g, "");
-        return send(res, 200, { configured: true, state: STATE[r.json?.status] || "stopped", name: r.json?.me?.pushName || "", number: digits ? `+${digits.slice(0, 3)} ••• ${digits.slice(-3)}` : "" });
+        const state = STATE[r.json?.stateInstance] || "stopped";
+        let number = "";
+        if (state === "connected") {
+          const w = await gwCall("getWaSettings").catch(() => null);
+          const d = String(w?.json?.phone || "").replace(/\D/g, "");
+          if (d) number = `+${d.slice(0, 3)} ••• ${d.slice(-3)}`;
+        }
+        return send(res, 200, { configured: true, state, number, warning: r.json?.stateInstance === "yellowCard" });
       }
       if (a === "wa_qr") {
-        const r = await gwCall(`/api/${S}/auth/qr`);
-        if (!r.ok || !r.json?.data) return send(res, 200, { image: null });
-        return send(res, 200, { image: `data:${r.json.mimetype || "image/png"};base64,${r.json.data}` });
+        const r = await gwCall("qr");
+        if (!r.ok || r.json?.type !== "qrCode" || !r.json?.message) return send(res, 200, { image: null });
+        return send(res, 200, { image: `data:image/png;base64,${r.json.message}` });
       }
       if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
       if (a === "wa_start") {
-        let r = await gwCall(`/api/sessions/${S}/start`, { method: "POST" });
-        if (r.status === 404) r = await gwCall("/api/sessions/start", { method: "POST", body: { name: waSession() } });
-        await audit(me.id, "whatsapp.start", "");
-        return send(res, 200, { ok: r.ok || r.status === 422 });
+        const r = await gwCall("reboot");
+        await audit(me.id, "whatsapp.reboot", "");
+        return send(res, 200, { ok: r.ok });
       }
       if (a === "wa_test") {
         const to = normalizePhone(req.body?.phone);
         if (!to) return send(res, 400, { error: "Numéro invalide (avec l'indicatif, ex. +237 699 12 34 56)" });
         const ok = await gwSend(to, "Maison : message de test envoyé depuis le tableau de bord.");
         await audit(me.id, "whatsapp.test", "…" + to.slice(-3));
-        return send(res, ok ? 200 : 502, ok ? { ok: true } : { error: "Envoi impossible : le numéro est-il connecté ?" });
+        return send(res, ok ? 200 : 502, ok ? { ok: true } : { error: "Envoi impossible : numéro connecté ? limite du forfait atteinte ?" });
       }
       if (a === "wa_logout") {
-        const r = await gwCall(`/api/sessions/${S}/logout`, { method: "POST" });
+        const r = await gwCall("logout");
         await audit(me.id, "whatsapp.logout", "");
-        return send(res, 200, { ok: r.ok });
+        return send(res, 200, { ok: r.ok && r.json?.isLogout !== false });
       }
-    } catch { return send(res, 502, { error: "Passerelle WhatsApp injoignable" }); }
+    } catch { return send(res, 502, { error: "Green API injoignable" }); }
   }
   send(res, 404, { error: "Inconnu" });
 }

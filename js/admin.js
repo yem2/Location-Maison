@@ -429,7 +429,7 @@
     return h("div", {}, h("h2", {}, "Messagerie"), h("div", { class: "chat" }, list, pane));
   }
 
-  // ----- WhatsApp par QR code (service géré) : statut, QR, test, déconnexion -----
+  // ----- WhatsApp par QR code (service géré, Green API) : statut, QR, test, déconnexion -----
   function whatsappView() {
     const box = h("div", { class: "card wa" });
     let busy = false, lastQr = 0, qrImg = null, st = null, note = "", noteErr = false;
@@ -442,20 +442,23 @@
       const foot = h("p", { class: "muted wa-note" }, "Solution non officielle : le numéro peut être bloqué par WhatsApp et les messages transitent par le prestataire. Utilisez un numéro dédié à l’entreprise.");
       const kids = [head];
       if (!st) kids.push(h("p", { class: "muted" }, "Chargement…"));
-      else if (!st.configured) kids.push(h("p", {}, "Le service n’est pas encore relié au site."), h("p", { class: "muted" }, "Ajoutez WA_GATEWAY_URL et WA_GATEWAY_KEY dans Vercel (voir LISEZ-MOI), puis redéployez." + (st.meta ? " Les notifications passent pour l’instant par l’API Cloud de Meta." : "")));
+      else if (!st.configured) kids.push(h("p", {}, "Le service n’est pas encore relié au site."), h("p", { class: "muted" }, "Ajoutez GREEN_API_ID et GREEN_API_TOKEN (et GREEN_API_URL) dans Vercel, puis redéployez." + (st.meta ? " Les notifications passent pour l’instant par l’API Cloud de Meta." : "")));
       else {
-        const label = { connected: ["wa-ok", "Connecté"], qr: ["wa-warn", "En attente du scan"], starting: ["wa-warn", "Démarrage…"], failed: ["wa-bad", "Échec"], stopped: ["wa-off", "Déconnecté"], unreachable: ["wa-bad", "Service injoignable"] }[st.state] || ["wa-off", "Déconnecté"];
+        const label = { connected: ["wa-ok", "Connecté"], qr: ["wa-warn", "En attente du scan"], starting: ["wa-warn", "Démarrage…"], failed: ["wa-bad", "Numéro bloqué"], stopped: ["wa-off", "Déconnecté"], unreachable: ["wa-bad", "Service injoignable"] }[st.state] || ["wa-off", "Déconnecté"];
         kids.push(h("div", { class: "row" }, pill(label[0], label[1]), h("button", { class: "ghost wa-ref", title: "Actualiser", "aria-label": "Actualiser", onclick: () => refresh(true) }, "↻")));
         if (st.state === "connected") {
-          if (st.number || st.name) kids.push(h("p", { class: "muted" }, [st.name, st.number].filter(Boolean).join(" · ")));
+          if (st.number) kids.push(h("p", { class: "muted" }, st.number));
+          if (st.warning) kids.push(h("p", { class: "wa-err" }, "Avertissement WhatsApp (carton jaune) : réduisez le volume d’envois."));
           kids.push(phone, h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_test", "POST", { phone: phone.value }); say("Message de test envoyé."); }) }, "Envoyer le test"),
             h("button", { class: "ghost", disabled: busy, onclick: () => { if (confirm("Déconnecter ce numéro de WhatsApp ?")) act(async () => { await api("/api/console?a=wa_logout", "POST", {}); qrImg = null; }); } }, "Déconnecter le numéro"));
         } else if (st.state === "qr") {
           kids.push(qrImg ? h("img", { class: "wa-qr", src: qrImg, alt: "QR code WhatsApp", width: 240, height: 240 }) : h("p", { class: "muted" }, "Génération du QR code…"),
             h("p", { class: "muted" }, "Sur le téléphone : WhatsApp > Paramètres > Appareils connectés > Connecter un appareil, puis scannez ce code."));
+        } else if (st.state === "failed") {
+          kids.push(h("p", { class: "wa-err" }, "WhatsApp a bloqué ce numéro. Contactez le support Green API ou utilisez un autre numéro."));
         } else if (st.state !== "unreachable") {
           kids.push(h("p", { class: "muted" }, "Aucun numéro connecté : les notifications WhatsApp ne partent pas."), h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_start", "POST", {}); }) }, "Générer le QR code"));
-        } else kids.push(h("p", { class: "muted" }, "Le serveur WhatsApp ne répond pas. Vérifiez que le service tourne sur le VPS."));
+        } else kids.push(h("p", { class: "muted" }, "Green API ne répond pas. Vérifiez GREEN_API_ID, GREEN_API_TOKEN et GREEN_API_URL dans Vercel."));
       }
       if (note) kids.push(h("p", { class: noteErr ? "wa-err" : "wa-okmsg", role: "status" }, note));
       kids.push(foot);
@@ -470,7 +473,7 @@
       draw();
     }
     draw(); refresh(true);
-    const timer = setInterval(() => { if (!box.isConnected) return clearInterval(timer); if (!busy) refresh(false); }, 4000);
+    const timer = setInterval(() => { if (!box.isConnected) return clearInterval(timer); if (!busy) refresh(false); }, 5000);
     return box;
   }
 
