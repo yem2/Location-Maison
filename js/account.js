@@ -37,6 +37,7 @@
     if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
     const due = h("div", { class: "acc-pay" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
     if (o.payment_status === "paid") due.append(h("div", {}, h("span", { class: "acc-pill acc-confirmed" }, "Payé ✓")));
+    else if (o.payment_status === "refunded") due.append(h("div", { class: "acc-note" }, "Acompte remboursé."));
     else if (o.payment_status === "cash_pending") due.append(h("div", { class: "acc-note" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
     else {
       if (o.payment_status === "pending") due.append(h("div", { class: "acc-note" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));

@@ -47,3 +47,11 @@ CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status, created_at D
 -- Rapidité : index sur les requêtes les plus fréquentes
 CREATE INDEX IF NOT EXISTS orders_customer_idx ON orders (customer_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS orders_property_status_idx ON orders (property_id, status);
+
+-- Statut « remboursé » : la base d'origine ne l'autorise pas sur orders (sans ceci, un remboursement échouerait)
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'orders_payment_status_check' AND conrelid = 'orders'::regclass AND pg_get_constraintdef(oid) NOT LIKE '%refunded%') THEN
+    ALTER TABLE orders DROP CONSTRAINT orders_payment_status_check;
+    ALTER TABLE orders ADD CONSTRAINT orders_payment_status_check CHECK (payment_status IN ('none','cash_pending','pending','paid','failed','refunded'));
+  END IF;
+END $$;

@@ -1,4 +1,5 @@
 {
+  "regions": ["iad1"],
   "rewrites": [
     {
       "source": "/acheter",
@@ -112,6 +113,7 @@
     {
       "path": "/api/monitor?a=cron",
       "schedule": "0 5 * * *"
-    }
+    },
+    { "path": "/api/orders?a=visit_reminders", "schedule": "0 6 * * *" }
   ]
 }

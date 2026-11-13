@@ -1,6 +1,8 @@
 import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str , wrap } from "./_lib.js";
+import { visitsHandler } from "./_visits.js";
 
 async function handler(req, res) {
+  if (/^visit/.test(String(req.query.a || ""))) return visitsHandler(req, res); // visites : voir api/_visits.js
   // ----- Espace administrateur -----
   if (req.query.admin === "1") {
     const u = await requireUser(req, res);

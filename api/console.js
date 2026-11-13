@@ -1,4 +1,5 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap, gwCall, gwSend, waGatewayOn, normalizePhone } from "./_lib.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap } from "./_lib.js";
+import { ensureVisitSchema } from "./_visits.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -11,7 +12,9 @@ async function handler(req, res) {
     const [o] = await sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`;
     const [ch] = await sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`;
     const [sg] = await sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`;
-    return send(res, 200, { notifications: n.n, pendingOrders: o.n, chat: ch.n, suggestions: sg.n });
+    let pendingVisits = 0;
+    if (await ensureVisitSchema()) { try { const [v] = await sql`SELECT count(*)::int AS n FROM visits WHERE status = 'requested'`; pendingVisits = v.n; } catch (e) { /* ignoré */ } }
+    return send(res, 200, { notifications: n.n, pendingOrders: o.n, chat: ch.n, suggestions: sg.n, pendingVisits });
   }
   if (a === "stats") {
     const [p] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`;
@@ -116,48 +119,6 @@ async function handler(req, res) {
       ? await sql`SELECT x.id, x.action, x.property_id, x.detail, x.created_at, c.id AS customer_id, c.name, c.email FROM activity x JOIN customers c ON c.id = x.customer_id WHERE x.customer_id = ${cid} ORDER BY x.created_at DESC LIMIT 300`
       : await sql`SELECT x.id, x.action, x.property_id, x.detail, x.created_at, c.id AS customer_id, c.name, c.email FROM activity x JOIN customers c ON c.id = x.customer_id ORDER BY x.created_at DESC LIMIT 300`;
     return send(res, 200, rows);
-  }
-  if (a && a.startsWith("wa_")) {
-    if (!isSuper) return send(res, 403, { error: "Réservé au super administrateur" });
-    if (!waGatewayOn()) return send(res, 200, { configured: false, meta: !!process.env.WA_ACCESS_TOKEN });
-    const STATE = { authorized: "connected", yellowCard: "connected", notAuthorized: "qr", starting: "starting", sleepMode: "starting", blocked: "failed" };
-    try {
-      if (a === "wa_status") {
-        const r = await gwCall("getStateInstance");
-        if (!r.ok) return send(res, 200, { configured: true, state: "unreachable" });
-        const state = STATE[r.json?.stateInstance] || "stopped";
-        let number = "";
-        if (state === "connected") {
-          const w = await gwCall("getWaSettings").catch(() => null);
-          const d = String(w?.json?.phone || "").replace(/\D/g, "");
-          if (d) number = `+${d.slice(0, 3)} ••• ${d.slice(-3)}`;
-        }
-        return send(res, 200, { configured: true, state, number, warning: r.json?.stateInstance === "yellowCard" });
-      }
-      if (a === "wa_qr") {
-        const r = await gwCall("qr");
-        if (!r.ok || r.json?.type !== "qrCode" || !r.json?.message) return send(res, 200, { image: null });
-        return send(res, 200, { image: `data:image/png;base64,${r.json.message}` });
-      }
-      if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
-      if (a === "wa_start") {
-        const r = await gwCall("reboot");
-        await audit(me.id, "whatsapp.reboot", "");
-        return send(res, 200, { ok: r.ok });
-      }
-      if (a === "wa_test") {
-        const to = normalizePhone(req.body?.phone);
-        if (!to) return send(res, 400, { error: "Numéro invalide (avec l'indicatif, ex. +237 699 12 34 56)" });
-        const ok = await gwSend(to, "Maison : message de test envoyé depuis le tableau de bord.");
-        await audit(me.id, "whatsapp.test", "…" + to.slice(-3));
-        return send(res, ok ? 200 : 502, ok ? { ok: true } : { error: "Envoi impossible : numéro connecté ? limite du forfait atteinte ?" });
-      }
-      if (a === "wa_logout") {
-        const r = await gwCall("logout");
-        await audit(me.id, "whatsapp.logout", "");
-        return send(res, 200, { ok: r.ok && r.json?.isLogout !== false });
-      }
-    } catch { return send(res, 502, { error: "Green API injoignable" }); }
   }
   send(res, 404, { error: "Inconnu" });
 }

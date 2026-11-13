@@ -61,7 +61,7 @@ async function handler(req, res) {
   if (a === "threads") {
     await supportThread(c.id);
     return send(res, 200, await sql`SELECT t.id, t.kind, t.last_message_at,
-      CASE WHEN t.kind = 'support' THEN 'Support Maison' ELSE o.name END AS title,
+      CASE WHEN t.kind = 'support' THEN 'Support' ELSE o.name END AS title,
       (SELECT body FROM chat_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body,
       (SELECT count(*)::int FROM chat_messages m WHERE m.thread_id = t.id AND NOT (m.sender_type = 'customer' AND m.sender_customer_id = ${c.id})
         AND m.id > CASE WHEN t.customer_a = ${c.id} THEN t.a_read_id ELSE t.b_read_id END) AS unread
@@ -95,7 +95,7 @@ async function handler(req, res) {
       else await sql`UPDATE chat_threads SET b_read_id = GREATEST(b_read_id, ${last}) WHERE id = ${tid}`;
     }
     return send(res, 200, rows.map((m) => ({ id: m.id, mine: m.sender_type === "customer" && m.sender_customer_id === c.id,
-      who: m.sender_type === "admin" ? "Support Maison" : m.cname || "Client", body: m.body, created_at: m.created_at })));
+      who: m.sender_type === "admin" ? "Support" : m.cname || "Client", body: m.body, created_at: m.created_at })));
   }
 
   if (a === "send" && req.method === "POST") {

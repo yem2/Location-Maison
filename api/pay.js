@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, requireCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer, str, siteUrl, verifyPassword, verifyTotp, decrypt, wrap } from "./_lib.js";
-import { KINDS, PROVIDER_LABEL, env, providerReady, ensurePaySchema, sealNumber, openNumber, maskNumber, methodView, flw, flwOptions, PAYPAL_CURRENCIES, ppCreate, ppCapture, ppGet, ppVerified } from "./_paylib.js";
+import { sql, send, requireUser, requireCustomer, currentUser, currentCustomer, throttle, audit, logActivity, notifyAdmins, notifyCustomer, sendMail, mailConfigured, str, siteUrl, verifyPassword, verifyTotp, decrypt, wrap } from "./_lib.js";
+import { KINDS, PROVIDER_LABEL, env, providerReady, ensurePaySchema, sealNumber, openNumber, maskNumber, methodView, flw, flwOptions, PAYPAL_CURRENCIES, ppCreate, ppCapture, ppGet, ppVerified, flwRefund, ppRefund } from "./_paylib.js";
+import { buildReceipt, buildContract, receiptNo, company, toCsv, localStamp, SITE_TZ, methodName } from "./_docs.js";
 
 // ============================================================================
 //  Paiements : cartes, Orange Money, MTN MoMo, PayPal, espèces, virement.
@@ -19,6 +20,25 @@ const kindLabel = (k) => (KINDS[k] ? KINDS[k].label : k);
 const redirect = (res, result) => { res.setHeader("Location", `/compte?paiement=${result}`); return res.status(302).end(); };
 const REF_RE = /^[A-Za-z0-9][A-Za-z0-9 ._\/-]{3,39}$/;
 
+// ---------- Documents ----------
+function sendPdf(res, buf, name) {
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+  res.setHeader("Cache-Control", "private, no-store");
+  res.status(200).end(buf);
+}
+async function emailReceipt(p, order) {
+  if (!mailConfigured()) return;
+  const [c] = await sql`SELECT name, email, phone FROM customers WHERE id = ${p.customer_id}`;
+  if (!c || !c.email) return;
+  const no = receiptNo(p), pdf = buildReceipt({ payment: p, order, customer: c });
+  await sendMail(c.email, `Reçu de paiement ${no}`,
+    `Bonjour ${c.name},\n\nNous avons bien reçu votre paiement de ${money(p.amount, p.currency)} pour « ${order.property_title} ». Votre reçu est joint à ce message ; il reste aussi téléchargeable depuis votre espace client.\n\nMerci,\n${company().name}`,
+    [{ filename: `recu-${no}.pdf`, content: pdf.toString("base64") }]);
+}
+const PAY_STATUSES = ["pending", "awaiting_confirmation", "paid", "failed", "cancelled", "rejected", "duplicate", "refund_pending", "refunded"];
+const STATUS_FR = { pending: "En cours", awaiting_confirmation: "À confirmer", paid: "Payé", failed: "Échoué", cancelled: "Annulé", rejected: "Refusé", duplicate: "Doublon", refund_pending: "Remboursement en cours", refunded: "Remboursé" };
+
 // ---------- Passage à « payé » (idempotent) ----------
 async function markPaid(p, { providerRef = "", by = null, manual = false } = {}) {
   let up;
@@ -29,7 +49,7 @@ async function markPaid(p, { providerRef = "", by = null, manual = false } = {})
   } catch (e) {
     if (!dup(e)) throw e;
     // Déjà payé par un autre moyen : on ne crédite pas deux fois, on alerte pour remboursement.
-    await sql`UPDATE payments SET status = 'duplicate', updated_at = now() WHERE id = ${p.id} AND status <> 'paid'`;
+    await sql`UPDATE payments SET status = 'duplicate', provider_ref = ${providerRef || p.provider_ref}, updated_at = now() WHERE id = ${p.id} AND status <> 'paid'`;
     await notifyAdmins("payment_duplicate", "Paiement en double à rembourser", `${p.reference} — ${money(p.amount, p.currency)} (${kindLabel(p.kind)})`, p.customer_id);
     return "duplicate";
   }
@@ -37,7 +57,8 @@ async function markPaid(p, { providerRef = "", by = null, manual = false } = {})
   const [o] = await sql`UPDATE orders SET payment_status = 'paid', payment_method = ${p.kind}, payment_ref = ${p.reference}, updated_at = now() WHERE id = ${p.order_id} RETURNING property_title`;
   const title = (o && o.property_title) || "votre réservation";
   await notifyAdmins("payment", "Paiement reçu", `${title} — ${money(p.amount, p.currency)} (${kindLabel(p.kind)})`, p.customer_id);
-  await notifyCustomer(p.customer_id, `Paiement reçu pour « ${title} ». Merci !`);
+  await notifyCustomer(p.customer_id, `Paiement reçu pour « ${title} ». Votre reçu est disponible dans « Mes demandes ».`);
+  try { await emailReceipt({ ...p, status: "paid", confirmed_at: new Date().toISOString() }, { ...(o || {}), property_title: title }); } catch { /* le reçu reste téléchargeable */ }
   return "paid";
 }
 
@@ -136,6 +157,50 @@ async function handler(req, res) {
     return res.status(200).end();
   }
 
+  // ---------- Documents PDF : reçu et contrat (client concerné ou administrateur) ----------
+  if (a === "receipt" || a === "contract") {
+    const c = await currentCustomer(req);
+    const u = c ? null : await currentUser(req);
+    if (!c && !u) return send(res, 401, { error: "Connexion requise." });
+    if (!(await ensurePaySchema())) return send(res, 503, { error: "Module de paiement indisponible." });
+    const oid = Number(req.query.orderId) || 0;
+    const [o] = c ? await sql`SELECT * FROM orders WHERE id = ${oid} AND customer_id = ${c.id}` : await sql`SELECT * FROM orders WHERE id = ${oid}`;
+    if (!o) return send(res, 404, { error: "Demande introuvable." });
+    const [cu] = c ? [c] : await sql`SELECT name, email, phone FROM customers WHERE id = ${o.customer_id}`;
+    if (!cu) return send(res, 404, { error: "Client introuvable." });
+    let [p] = await sql`SELECT * FROM payments WHERE order_id = ${o.id} AND status = 'paid' ORDER BY id DESC LIMIT 1`;
+    if (!p && o.payment_status === "paid") p = { id: o.id, order_id: o.id, legacy: true, kind: o.payment_method, amount: o.amount, currency: o.currency, reference: o.payment_ref || "", payer_ref: "", confirmed_at: o.updated_at, created_at: o.updated_at };
+    if (a === "receipt") {
+      if (!p) return send(res, o.payment_status === "refunded" ? 409 : 404, { error: o.payment_status === "refunded" ? "Ce paiement a été remboursé : aucun reçu n’est disponible." : "Aucun paiement enregistré pour cette demande." });
+      return sendPdf(res, buildReceipt({ payment: p, order: o, customer: cu }), `recu-${receiptNo(p)}.pdf`);
+    }
+    if (o.status !== "confirmed") return send(res, 409, { error: "Le contrat est disponible une fois la demande acceptée." });
+    const [pr] = o.property_id ? await sql`SELECT title, location, operation, kind_label, price, currency, rooms, bedrooms, bathrooms, area, price_suffix FROM properties WHERE id = ${o.property_id}` : [];
+    const paid = p ? { confirmed_at: p.confirmed_at, created_at: p.created_at, receiptNo: receiptNo(p) } : null;
+    return sendPdf(res, buildContract({ order: o, property: pr || null, customer: cu, paid }), `contrat-${o.id}.pdf`);
+  }
+
+  // ---------- Export comptable CSV (super administrateur) ----------
+  if (a === "export") {
+    const me = await requireUser(req, res, "super_admin");
+    if (!me) return;
+    if (!(await ensurePaySchema())) return send(res, 503, { error: "Module de paiement indisponible." });
+    const iso = /^\d{4}-\d{2}-\d{2}$/, today = localStamp(new Date()).slice(0, 10);
+    const from = iso.test(req.query.from) ? req.query.from : today.slice(0, 8) + "01", to = iso.test(req.query.to) ? req.query.to : today;
+    const tz = SITE_TZ();
+    const rows = await sql`SELECT p.id, p.created_at, p.confirmed_at, p.kind, p.amount, p.currency, p.status, p.reference, p.provider_ref, p.payer_ref, o.property_title, c.name, c.email, c.phone
+      FROM payments p LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN customers c ON c.id = p.customer_id
+      WHERE (p.created_at AT TIME ZONE ${tz})::date BETWEEN ${from}::date AND ${to}::date ORDER BY p.created_at LIMIT 20000`;
+    const csv = toCsv(["Date", "N° reçu", "Client", "E-mail", "Téléphone", "Bien", "Moyen", "Statut", "Montant", "Devise", "Référence", "Réf. fournisseur", "Réf. transaction client", "Confirmé le"],
+      rows.map((r) => [localStamp(r.created_at), r.status === "paid" || r.status === "refunded" ? receiptNo(r) : "", r.name, r.email, r.phone, r.property_title, methodName(r.kind), STATUS_FR[r.status] || r.status,
+        String(Number(r.amount)).replace(".", ","), r.currency, r.reference, r.provider_ref, r.payer_ref, localStamp(r.confirmed_at)]));
+    await audit(me.id, "payment.export", `${from} → ${to} (${rows.length} lignes)`);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="paiements-${from}_${to}.csv"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.status(200).end(csv);
+  }
+
   // ---------- Administration : lectures (GET) ----------
   if (a === "admin_methods" || a === "admin_status") {
     const me = await requireUser(req, res, "super_admin");
@@ -152,7 +217,7 @@ async function handler(req, res) {
     const me = await requireUser(req, res);
     if (!me) return;
     if (!(await ensurePaySchema())) return send(res, 200, { rows: [], summary: { awaiting: 0, paid: [] } });
-    const st = ["pending", "awaiting_confirmation", "paid", "failed", "cancelled", "rejected", "duplicate"].includes(req.query.status) ? req.query.status : null;
+    const st = PAY_STATUSES.includes(req.query.status) ? req.query.status : null;
     const rows = st
       ? await sql`SELECT p.id, p.order_id, p.kind, p.provider, p.amount, p.currency, p.status, p.reference, p.payer_ref, p.note, p.created_at, p.confirmed_at, o.property_title, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone
           FROM payments p LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN customers c ON c.id = p.customer_id WHERE p.status = ${st} ORDER BY p.created_at DESC LIMIT 200`
@@ -160,7 +225,8 @@ async function handler(req, res) {
           FROM payments p LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN customers c ON c.id = p.customer_id ORDER BY p.created_at DESC LIMIT 200`;
     const [aw] = await sql`SELECT count(*)::int AS n FROM payments WHERE status = 'awaiting_confirmation'`;
     const paid = await sql`SELECT currency, sum(amount)::float AS total, count(*)::int AS n FROM payments WHERE status = 'paid' GROUP BY currency ORDER BY currency`;
-    return send(res, 200, { rows, summary: { awaiting: aw.n, paid } });
+    const refunded = await sql`SELECT currency, sum(amount)::float AS total, count(*)::int AS n FROM payments WHERE status = 'refunded' GROUP BY currency ORDER BY currency`;
+    return send(res, 200, { rows, summary: { awaiting: aw.n, paid, refunded } });
   }
 
   if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
@@ -210,7 +276,7 @@ async function handler(req, res) {
   }
 
   // ---------- Administration : moyens de paiement (super administrateur) ----------
-  if (a === "admin_save" || a === "admin_toggle" || a === "admin_delete") {
+  if (a === "admin_save" || a === "admin_toggle" || a === "admin_delete" || a === "admin_refund") {
     const me = await requireUser(req, res, "super_admin");
     if (!me) return;
     if (!(await ensurePaySchema())) return send(res, 503, { error: "Module de paiement indisponible : base de données injoignable." });
@@ -228,6 +294,37 @@ async function handler(req, res) {
     }
 
     if (!(await reauth(req, res, me, b))) return;
+
+    if (a === "admin_refund") {
+      const pid = Number(b.paymentId) || 0, reason = str(b.reason, 200), recordOnly = b.recordOnly === true;
+      const [p] = await sql`SELECT * FROM payments WHERE id = ${pid}`;
+      if (!p) return send(res, 404, { error: "Paiement introuvable." });
+      if (!["paid", "duplicate"].includes(p.status) && !(recordOnly && p.status === "refund_pending")) return send(res, 409, { error: "Seuls les paiements encaissés ou en double peuvent être remboursés." });
+      const [claim] = await sql`UPDATE payments SET status = 'refund_pending', updated_at = now() WHERE id = ${pid} AND status = ${p.status} RETURNING id`;
+      if (!claim) return send(res, 409, { error: "Un remboursement est déjà en cours pour ce paiement." });
+      const viaApi = !recordOnly && (p.provider === "flutterwave" || p.provider === "paypal");
+      let r = { ok: true, message: "" };
+      if (viaApi) {
+        try {
+          if (p.provider === "flutterwave") r = env().flutterwave && p.provider_ref ? await flwRefund(p.provider_ref, p.amount) : { ok: false, message: "identifiant de transaction manquant : remboursez depuis le tableau Flutterwave, puis utilisez « Déjà remboursé »" };
+          else r = env().paypal ? await ppRefund(p.provider_ref, p.reference) : { ok: false, message: "PayPal n’est pas configuré" };
+        } catch (e) {
+          // Réponse incertaine : on laisse « remboursement en cours » pour éviter un double remboursement
+          await audit(me.id, "payment.refund_unknown", p.reference);
+          return send(res, 504, { error: "Le fournisseur n’a pas répondu : vérifiez dans son tableau de bord si le remboursement a eu lieu, puis utilisez « Déjà remboursé »." });
+        }
+      }
+      if (!r.ok) {
+        await sql`UPDATE payments SET status = ${p.status === "refund_pending" ? "paid" : p.status}, updated_at = now() WHERE id = ${pid} AND status = 'refund_pending'`;
+        await audit(me.id, "payment.refund_failed", `${p.reference} ${r.message}`.slice(0, 300));
+        return send(res, 502, { error: "Remboursement refusé par le fournisseur" + (r.message ? " : " + r.message : "") + "." });
+      }
+      await sql`UPDATE payments SET status = 'refunded', note = ${reason}, confirmed_by = ${me.id}, updated_at = now() WHERE id = ${pid}`;
+      await sql`UPDATE orders SET payment_status = 'refunded', updated_at = now() WHERE id = ${p.order_id} AND payment_status = 'paid' AND payment_ref = ${p.reference}`;
+      await notifyCustomer(p.customer_id, `Votre paiement de ${money(p.amount, p.currency)} a été remboursé${reason ? " (" + reason + ")" : ""}.`);
+      await audit(me.id, "payment.refund", `${p.reference} ${money(p.amount, p.currency)} ${viaApi ? "via " + p.provider : "(enregistré manuellement)"}`);
+      return send(res, 200, { ok: true, via: viaApi ? p.provider : "manual" });
+    }
 
     if (a === "admin_delete") {
       const [m] = await sql`DELETE FROM payment_methods WHERE id = ${id} RETURNING kind, label`;
@@ -319,7 +416,7 @@ async function handler(req, res) {
         tx_ref: reference, amount: Number(o.amount), currency: o.currency, payment_options: flwOptions(m.kind, o.currency),
         redirect_url: `${base}/api/pay?a=return`,
         customer: { email: c.email, name: c.name, phonenumber: c.phone || undefined },
-        customizations: { title: "Maison — réservation", description: String(o.property_title).slice(0, 100) },
+        customizations: { title: "Gestion Immobilière — réservation", description: String(o.property_title).slice(0, 100) },
         meta: { order_id: o.id, method: m.kind }
       }) });
       if (r.status !== "success" || !r.data || !r.data.link) {

@@ -52,6 +52,12 @@ export function ensurePaySchema() {
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS payments_payer_ref_uniq ON payments (lower(payer_ref)) WHERE payer_ref <> '' AND status IN ('awaiting_confirmation','paid')`;
       await sql`CREATE INDEX IF NOT EXISTS payments_order_idx ON payments (order_id, created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS payments_status_idx ON payments (status, created_at DESC)`;
+      // La base d'origine n'autorise pas le statut « remboursé » sur orders : on élargit la contrainte (une seule fois, de façon atomique)
+      await sql`DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'orders_payment_status_check' AND conrelid = 'orders'::regclass AND pg_get_constraintdef(oid) NOT LIKE '%refunded%') THEN
+          ALTER TABLE orders DROP CONSTRAINT orders_payment_status_check;
+          ALTER TABLE orders ADD CONSTRAINT orders_payment_status_check CHECK (payment_status IN ('none','cash_pending','pending','paid','failed','refunded'));
+        END IF; END $$`;
       const [{ n }] = await sql`SELECT count(*)::int AS n FROM payment_methods`;
       if (!n) {
         const on = env().flutterwave; // si le paiement en ligne marchait déjà, on le garde actif
@@ -118,7 +124,7 @@ export async function ppCreate({ reference, amount, currency, description, retur
   const r = await pp("/v2/checkout/orders", "POST", {
     intent: "CAPTURE",
     purchase_units: [{ reference_id: reference, custom_id: reference, description: String(description).slice(0, 120), amount: { currency_code: currency, value: ppAmount(amount, currency) } }],
-    payment_source: { paypal: { experience_context: { brand_name: "Maison", locale: "fr-FR", landing_page: "LOGIN", user_action: "PAY_NOW", shipping_preference: "NO_SHIPPING", return_url: returnUrl, cancel_url: cancelUrl } } }
+    payment_source: { paypal: { experience_context: { brand_name: "Gestion Immobilière", locale: "fr-FR", landing_page: "LOGIN", user_action: "PAY_NOW", shipping_preference: "NO_SHIPPING", return_url: returnUrl, cancel_url: cancelUrl } } }
   }, reference);
   const link = (r.data.links || []).find((l) => l.rel === "payer-action" || l.rel === "approve");
   if (!r.ok || !r.data.id || !link) return null;
@@ -135,4 +141,19 @@ export function ppVerified(order, p) {
   if (unit.custom_id !== p.reference && unit.reference_id !== p.reference) return false;
   if (!cap.amount || cap.amount.currency_code !== p.currency) return false;
   return Number(cap.amount.value) + 0.005 >= Number(p.amount);
+}
+
+// ---------- Remboursements ----------
+export async function flwRefund(providerRef, amount) {
+  const r = await flw(`/transactions/${encodeURIComponent(providerRef)}/refund`, { method: "POST", body: JSON.stringify({ amount: Number(amount) }) });
+  return { ok: r.status === "success", message: r.message || "" };
+}
+export async function ppRefund(orderId, reference) {
+  const g = await ppGet(orderId);
+  const cap = g.ok && g.data.purchase_units && g.data.purchase_units[0] && g.data.purchase_units[0].payments && g.data.purchase_units[0].payments.captures && g.data.purchase_units[0].payments.captures[0];
+  if (!cap || !cap.id) return { ok: false, message: "capture PayPal introuvable" };
+  if (cap.status === "REFUNDED") return { ok: true, message: "" };
+  const r = await pp(`/v2/payments/captures/${encodeURIComponent(cap.id)}/refund`, "POST", { note_to_payer: "Remboursement — Gestion Immobilière" }, reference + "-refund");
+  const d = r.data || {};
+  return { ok: r.ok && ["COMPLETED", "PENDING"].includes(d.status), message: d.message || (d.details && d.details[0] && d.details[0].description) || "" };
 }

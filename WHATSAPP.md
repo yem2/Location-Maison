@@ -1,3 +1,13 @@
+# WhatsApp : Green API ou API Cloud de Meta
+
+**Option A — Green API (instance personnelle, la plus simple).** Variables Vercel (type « Sensitive ») : `ID_INSTANCE`, `API_TOKEN_INSTANCE`, `API_URL` (ex. `https://7107.api.greenapi.com`). Les copies nommées `ID_INSTANCE1`, `API_TOKEN_INSTANCE1`, `API_URL1` sont prioritaires si elles existent. L'instance doit être **autorisée** (QR code scanné avec le WhatsApp de l'entreprise). Les messages sont du texte libre signé du nom de l'agence (`COMPANY_NAME`). Le plan gratuit « Developer » est limité par Green API.
+
+**Pour vérifier :** Supervision/Profil > « Mon profil » > renseignez votre numéro, cochez la case WhatsApp, enregistrez, puis **Tester WhatsApp**.
+
+**Option B — API Cloud de Meta** (ci-dessous). Green API est utilisé en priorité s'il est configuré.
+
+---
+
 # Notifications WhatsApp (API Cloud de Meta)
 
 Le site envoie un message WhatsApp à un utilisateur (client ou administrateur) seulement si :

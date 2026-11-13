@@ -4,10 +4,11 @@
   const NS = "http://www.w3.org/2000/svg";
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const NAV = [
-    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["favoris", "Favoris", "Favoris", "heart"],
+    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["visites", "Mes visites", "Visites", "calendar"], ["favoris", "Favoris", "Favoris", "heart"],
     ["messages", "Messagerie", "Messages", "chat"], ["notifications", "Notifications", "Alertes", "bell"], ["profil", "Mon profil", "Profil", "user"]
   ];
   const ICON = {
+    calendar: "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z|M3 10h18|M8 3v4|M16 3v4",
     home: "M3 11l9-8 9 8|M5 10v10h5v-6h4v6h5V10", list: "M8 6h13|M8 12h13|M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01",
     heart: "M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z", chat: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
     bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9|M13.7 21a2 2 0 0 1-3.4 0", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
@@ -164,15 +165,24 @@
   }
 
   function payBlock(o) {
-    if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
-    const box = h("div", { class: "paybox" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
-    if (o.payment_status === "paid") box.append(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
-    else if (o.payment_status === "cash_pending") box.append(h("div", { class: "muted" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
-    else {
-      if (o.payment_status === "pending") box.append(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
-      box.append(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => window.MaisonPay.open(o, async () => { await reloadOrders(); render(); }) }, "Payer l’acompte")));
+    if (o.status !== "confirmed") return "";
+    const parts = [];
+    if (Number(o.amount) > 0) {
+      parts.push(h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
+      if (o.payment_status === "paid") parts.push(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
+      else if (o.payment_status === "refunded") parts.push(h("div", { class: "muted" }, "Acompte remboursé."));
+      else if (o.payment_status === "cash_pending") parts.push(h("div", { class: "muted" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
+      else {
+        if (o.payment_status === "pending") parts.push(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
+        parts.push(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => window.MaisonPay.open(o, async () => { await reloadOrders(); render(); }) }, "Payer l’acompte")));
+      }
     }
-    return box;
+    // Documents : reçu (une fois payé) et projet de contrat (dès que la demande est acceptée)
+    parts.push(h("div", { class: "row docs" },
+      o.payment_status === "paid" ? h("a", { class: "btn ghost sm", href: "/api/pay?a=receipt&orderId=" + o.id, download: "" }, "Télécharger le reçu (PDF)") : "",
+      h("a", { class: "btn ghost sm", href: "/api/pay?a=contract&orderId=" + o.id, download: "" }, "Projet de contrat (PDF)"),
+      h("a", { class: "btn ghost sm", href: "/compte?visite=" + encodeURIComponent(o.property_id || "") + "#visites" }, "Planifier une visite")));
+    return h("div", { class: "paybox" }, ...parts);
   }
   function requests() {
     const groups = { all: () => true, pending: (o) => o.status === "pending", confirmed: (o) => o.status === "confirmed", closed: (o) => ["rejected", "cancelled"].includes(o.status) };
@@ -327,7 +337,73 @@
       h("div", { class: "card" }, h("h2", {}, "Session"), h("p", { class: "muted" }, "Vous êtes connecté en tant que " + me.email + "."), h("button", { class: "btn danger", type: "button", onclick: logout }, "Se déconnecter")));
   }
 
-  const VIEWS = { apercu: overview, demandes: requests, favoris: favorites, messages: messaging, notifications, profil: profile };
+  // ---------- Visites ----------
+  const VST = { requested: "Demandée", confirmed: "Confirmée", declined: "Refusée", cancelled: "Annulée", done: "Effectuée" };
+  const fmtDay = (d) => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const addDays = (d, n) => new Date(new Date(d + "T12:00:00Z").getTime() + n * 864e5).toISOString().slice(0, 10);
+  function visits() {
+    const params = new URLSearchParams(location.search);
+    let list = null;
+    const listBox = h("div", { class: "card" }, h("h2", {}, "Mes visites"), h("p", { class: "muted" }, "Chargement…"));
+    const loadList = () => api("/api/orders?a=visits").then((r) => { list = r; date.min = r.today; date.max = addDays(r.today, 60); drawList(); })
+      .catch((x) => listBox.replaceChildren(h("h2", {}, "Mes visites"), h("p", { class: "err" }, x.message)));
+    async function cancel(v) {
+      if (!confirm("Annuler cette visite ?")) return;
+      try { await api("/api/orders?a=visit_cancel", "POST", { id: v.id }); toast("Visite annulée."); loadList(); loadSlots(); } catch (x) { toast(x.message); }
+    }
+    function drawList() {
+      const today = list.today, active = (v) => ["requested", "confirmed"].includes(v.status) && v.date >= today;
+      const up = list.visits.filter(active).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+      const past = list.visits.filter((v) => !active(v));
+      const item = (v) => h("div", { class: "visit" },
+        h("div", { class: "visit-d" }, h("strong", {}, fmtDay(v.date)), h("span", {}, "à " + v.time)),
+        h("div", { class: "visit-m" }, h("strong", {}, v.property_title), v.note ? h("small", { class: "muted" }, "Votre message : " + v.note) : "", v.admin_note ? h("small", { class: "muted" }, "Équipe : " + v.admin_note) : ""),
+        h("span", { class: "pill vs-" + v.status }, VST[v.status] || v.status),
+        h("div", { class: "visit-a" },
+          v.status === "confirmed" ? h("a", { class: "btn ghost sm", href: "/api/orders?a=visit_ics&id=" + v.id, download: "" }, "Ajouter au calendrier") : "",
+          active(v) ? h("button", { class: "btn ghost sm", type: "button", onclick: () => cancel(v) }, "Annuler") : ""));
+      listBox.replaceChildren(h("h2", {}, "Mes visites"), ...(up.length ? up.map(item) : [empty("Aucune visite à venir.")]), ...(past.length ? [h("h3", { class: "muted", style: "margin:16px 0 6px" }, "Historique"), ...past.slice(0, 10).map(item)] : []));
+    }
+
+    const prop = h("select", { "aria-label": "Bien à visiter" }, h("option", { value: "" }, "Choisir un bien…"));
+    const date = h("input", { type: "date", "aria-label": "Date de la visite" });
+    const slotsBox = h("div", { class: "slots", role: "group", "aria-label": "Horaires disponibles" });
+    const note = h("textarea", { rows: 2, maxlength: 300, placeholder: "Message pour l’équipe (facultatif)" });
+    const err = h("p", { class: "err", role: "alert" }), btn = h("button", { class: "btn", type: "submit", disabled: true }, "Demander cette visite");
+    let time = "";
+    function loadSlots() {
+      time = ""; btn.disabled = true;
+      if (!prop.value || !date.value) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Choisissez un bien et une date pour voir les horaires.")); return; }
+      slotsBox.replaceChildren(h("small", { class: "muted" }, "Chargement…"));
+      api("/api/orders?a=visit_slots&propertyId=" + encodeURIComponent(prop.value) + "&date=" + date.value).then((r) => {
+        if (!r.dayOk) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Pas de visites ce jour-là : choisissez un autre jour.")); return; }
+        if (!r.slots.some((s) => s.free)) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Plus de créneau libre ce jour-là : essayez une autre date.")); return; }
+        slotsBox.replaceChildren(...r.slots.map((s) => h("button", { type: "button", class: "slot" + (s.free ? "" : " off"), disabled: !s.free, onclick: (e) => {
+          time = s.time; [...slotsBox.children].forEach((c) => c.classList.toggle("on", c === e.currentTarget)); btn.disabled = false;
+        } }, s.time)));
+      }).catch((x) => slotsBox.replaceChildren(h("small", { class: "err" }, x.message)));
+    }
+    prop.addEventListener("change", loadSlots); date.addEventListener("change", loadSlots);
+    const fillProps = (arr) => {
+      arr.filter((p) => p.published !== false).forEach((p) => prop.append(h("option", { value: p.id }, p.title + (p.location ? " — " + p.location : ""))));
+      const want = params.get("visite"); if (want && [...prop.options].some((o) => o.value === want)) prop.value = want;
+      loadSlots();
+    };
+    if (props) fillProps(props); else api("/api/properties").then((r) => { props = Array.isArray(r) ? r : []; fillProps(props); }).catch(() => { err.textContent = "Impossible de charger la liste des biens."; });
+    slotsBox.append(h("small", { class: "muted" }, "Choisissez un bien et une date pour voir les horaires."));
+
+    const form = h("form", { class: "form", onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = ""; btn.disabled = true;
+      try {
+        await api("/api/orders?a=visit_book", "POST", { propertyId: prop.value, date: date.value, time, note: note.value });
+        note.value = ""; toast("Demande envoyée. Vous serez notifié dès la confirmation."); await loadList(); loadSlots();
+      } catch (x) { err.textContent = x.message; btn.disabled = !time; loadSlots(); }
+    } }, field("Bien à visiter", prop), field("Date", date), h("div", { class: "field" }, h("span", {}, "Horaire"), slotsBox), field("Message", note), err, btn);
+    loadList();
+    return h("div", { style: "display:grid;gap:20px;min-width:0" }, h("div", { class: "card" }, h("h2", {}, "Planifier une visite"), h("p", { class: "muted" }, "Choisissez un créneau libre : notre équipe confirme, puis vous recevez un rappel la veille et le jour même."), form), listBox);
+  }
+
+  const VIEWS = { apercu: overview, demandes: requests, visites: visits, favoris: favorites, messages: messaging, notifications, profil: profile };
 
   // ---------- Connexion ----------
   function showLogin(note) {

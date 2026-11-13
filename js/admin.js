@@ -283,8 +283,10 @@
         h("div", { class: "row" }, h("strong", {}, o.property_title || "(bien supprimé)"), h("span", { class: "pill" }, ST[o.status] || o.status)),
         h("div", { class: "muted" }, o.customer_name + " · " + o.customer_email + (o.customer_phone ? " · " + o.customer_phone : "") + " · " + when(o.created_at)),
         o.message ? h("p", { style: "white-space:pre-wrap" }, o.message) : "",
-        Number(o.amount) > 0 ? h("div", { class: "row" }, h("span", {}, "Acompte : " + new Intl.NumberFormat("fr-FR").format(o.amount) + " " + o.currency + " — " + ({ none: "à payer", pending: "paiement en cours", failed: "paiement échoué", paid: "payé ✓", cash_pending: "à confirmer (espèces / mobile money)" })[o.payment_status] + (o.payment_method ? " · " + o.payment_method : "")),
-          o.payment_status === "cash_pending" ? h("button", { onclick: async () => { await api("/api/pay?a=markpaid", "POST", { orderId: o.id }); reload(); } }, "Paiement reçu : confirmer") : "") : "",
+        Number(o.amount) > 0 ? h("div", { class: "row" }, h("span", {}, "Acompte : " + new Intl.NumberFormat("fr-FR").format(o.amount) + " " + o.currency + " — " + ({ none: "à payer", pending: "paiement en cours", failed: "paiement échoué", paid: "payé ✓", refunded: "remboursé", cash_pending: "à confirmer (espèces / mobile money)" })[o.payment_status] + (o.payment_method ? " · " + o.payment_method : "")),
+          o.payment_status === "cash_pending" ? h("button", { onclick: async () => { await api("/api/pay?a=markpaid", "POST", { orderId: o.id }); reload(); } }, "Paiement reçu : confirmer") : "",
+          o.payment_status === "paid" ? h("a", { class: "btn ghost", href: "/api/pay?a=receipt&orderId=" + o.id, download: "" }, "Reçu PDF") : "") : "",
+        o.status === "confirmed" ? h("div", { class: "row", style: "justify-content:flex-start" }, h("a", { class: "btn ghost", href: "/api/pay?a=contract&orderId=" + o.id, download: "" }, "Contrat PDF (projet)")) : "",
         o.status === "pending" ? h("div", { class: "row" },
           h("button", { onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "confirmed" }); reload(); } }, "Accepter (bien réservé)"),
           h("button", { class: "danger", onclick: async () => { await api("/api/orders?admin=1", "PATCH", { id: o.id, status: "rejected" }); reload(); } }, "Refuser")) : "",
@@ -429,54 +431,6 @@
     return h("div", {}, h("h2", {}, "Messagerie"), h("div", { class: "chat" }, list, pane));
   }
 
-  // ----- WhatsApp par QR code (service géré, Green API) : statut, QR, test, déconnexion -----
-  function whatsappView() {
-    const box = h("div", { class: "card wa" });
-    let busy = false, lastQr = 0, qrImg = null, st = null, note = "", noteErr = false;
-    const phone = h("input", { type: "tel", placeholder: "Numéro de test (ex. +237 699 12 34 56)", autocomplete: "off" });
-    const say = (t, err) => { note = t; noteErr = !!err; draw(); };
-    const act = async (fn) => { if (busy) return; busy = true; draw(); try { await fn(); } catch (e) { say(e.message, true); } busy = false; await refresh(true); };
-    const pill = (cls, t) => h("span", { class: "wa-pill " + cls }, t);
-    function draw() {
-      const head = h("div", { class: "wa-title" }, h("h2", {}, "WhatsApp par QR code"), h("span", { class: "wa-badge" }, "Service géré"));
-      const foot = h("p", { class: "muted wa-note" }, "Solution non officielle : le numéro peut être bloqué par WhatsApp et les messages transitent par le prestataire. Utilisez un numéro dédié à l’entreprise.");
-      const kids = [head];
-      if (!st) kids.push(h("p", { class: "muted" }, "Chargement…"));
-      else if (!st.configured) kids.push(h("p", {}, "Le service n’est pas encore relié au site."), h("p", { class: "muted" }, "Ajoutez GREEN_API_ID et GREEN_API_TOKEN (et GREEN_API_URL) dans Vercel, puis redéployez." + (st.meta ? " Les notifications passent pour l’instant par l’API Cloud de Meta." : "")));
-      else {
-        const label = { connected: ["wa-ok", "Connecté"], qr: ["wa-warn", "En attente du scan"], starting: ["wa-warn", "Démarrage…"], failed: ["wa-bad", "Numéro bloqué"], stopped: ["wa-off", "Déconnecté"], unreachable: ["wa-bad", "Service injoignable"] }[st.state] || ["wa-off", "Déconnecté"];
-        kids.push(h("div", { class: "row" }, pill(label[0], label[1]), h("button", { class: "ghost wa-ref", title: "Actualiser", "aria-label": "Actualiser", onclick: () => refresh(true) }, "↻")));
-        if (st.state === "connected") {
-          if (st.number) kids.push(h("p", { class: "muted" }, st.number));
-          if (st.warning) kids.push(h("p", { class: "wa-err" }, "Avertissement WhatsApp (carton jaune) : réduisez le volume d’envois."));
-          kids.push(phone, h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_test", "POST", { phone: phone.value }); say("Message de test envoyé."); }) }, "Envoyer le test"),
-            h("button", { class: "ghost", disabled: busy, onclick: () => { if (confirm("Déconnecter ce numéro de WhatsApp ?")) act(async () => { await api("/api/console?a=wa_logout", "POST", {}); qrImg = null; }); } }, "Déconnecter le numéro"));
-        } else if (st.state === "qr") {
-          kids.push(qrImg ? h("img", { class: "wa-qr", src: qrImg, alt: "QR code WhatsApp", width: 240, height: 240 }) : h("p", { class: "muted" }, "Génération du QR code…"),
-            h("p", { class: "muted" }, "Sur le téléphone : WhatsApp > Paramètres > Appareils connectés > Connecter un appareil, puis scannez ce code."));
-        } else if (st.state === "failed") {
-          kids.push(h("p", { class: "wa-err" }, "WhatsApp a bloqué ce numéro. Contactez le support Green API ou utilisez un autre numéro."));
-        } else if (st.state !== "unreachable") {
-          kids.push(h("p", { class: "muted" }, "Aucun numéro connecté : les notifications WhatsApp ne partent pas."), h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_start", "POST", {}); }) }, "Générer le QR code"));
-        } else kids.push(h("p", { class: "muted" }, "Green API ne répond pas. Vérifiez GREEN_API_ID, GREEN_API_TOKEN et GREEN_API_URL dans Vercel."));
-      }
-      if (note) kids.push(h("p", { class: noteErr ? "wa-err" : "wa-okmsg", role: "status" }, note));
-      kids.push(foot);
-      box.replaceChildren(...kids);
-    }
-    async function refresh(force) {
-      try {
-        st = await api("/api/console?a=wa_status");
-        if (st.state === "qr" && (force || Date.now() - lastQr > 15000)) { lastQr = Date.now(); const q = await api("/api/console?a=wa_qr"); qrImg = q.image || qrImg; }
-        if (st.state !== "qr") qrImg = null;
-      } catch (e) { st = { configured: true, state: "unreachable" }; }
-      draw();
-    }
-    draw(); refresh(true);
-    const timer = setInterval(() => { if (!box.isConnected) return clearInterval(timer); if (!busy) refresh(false); }, 5000);
-    return box;
-  }
-
   function suggestionsView() {
     return lazy("/api/console?a=suggestions", (rows, reload) => [h("h2", {}, rows.length + " suggestion(s)"), ...rows.map((s) => h("div", { class: "card" + (s.is_read ? "" : " unread") },
       h("div", { class: "row" }, h("strong", {}, s.name || "Client"), h("span", { class: "muted" }, when(s.created_at))), h("div", { class: "muted" }, s.email || ""),
@@ -490,10 +444,18 @@
 
   function profileView() {
     const msg = h("p", { class: "err", role: "status" });
+    const waBtn = h("button", { type: "button", class: "ghost", onclick: async () => {
+      msg.className = "muted"; msg.textContent = "Envoi du message de test…"; waBtn.disabled = true;
+      try {
+        const r = await api("/api/auth?a=wa_test", "POST", {});
+        msg.className = r.ok ? "ok" : "err";
+        msg.textContent = r.ok ? "Message de test envoyé : vérifiez votre WhatsApp." : r.error + (r.state ? " (état : " + r.state + ")" : "");
+      } catch (x) { msg.className = "err"; msg.textContent = x.message; } finally { waBtn.disabled = false; }
+    } }, "Tester WhatsApp");
     const phone = h("input", { type: "tel", value: me.phone || "", placeholder: "+237 6XX XX XX XX" }), wa = h("input", { type: "checkbox" }); wa.checked = !!me.whatsapp_optin;
     const profile = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); msg.textContent = ""; try { await api("/api/auth?a=profile", "POST", { phone: phone.value, whatsapp: wa.checked }); me.phone = phone.value; me.whatsapp_optin = wa.checked; msg.className = "ok"; msg.textContent = "Profil enregistré."; } catch (x) { msg.className = "err"; msg.textContent = x.message; } } },
       h("h2", {}, "Mon profil"), h("p", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur")),
-      field("Numéro WhatsApp (avec indicatif)", phone), h("br"), h("label", { class: "chk" }, wa, "Recevoir mes notifications sur WhatsApp quand je ne suis pas connecté"), msg, h("button", { type: "submit" }, "Enregistrer"));
+      field("Numéro WhatsApp (avec indicatif)", phone), h("br"), h("label", { class: "chk" }, wa, "Recevoir mes notifications sur WhatsApp quand je ne suis pas connecté"), msg, h("div", { class: "row", style: "justify-content:flex-start;gap:8px;flex-wrap:wrap" }, h("button", { type: "submit" }, "Enregistrer"), waBtn));
     const pmsg = h("p", { class: "err" }), cur = h("input", { type: "password", autocomplete: "current-password" }), nxt = h("input", { type: "password", autocomplete: "new-password", minlength: 12 });
     const pw = h("form", { class: "card", onsubmit: async (e) => { e.preventDefault(); pmsg.textContent = ""; try { await api("/api/auth?a=password", "POST", { current: cur.value, next: nxt.value }); pmsg.className = "ok"; pmsg.textContent = "Mot de passe modifié."; cur.value = nxt.value = ""; } catch (x) { pmsg.className = "err"; pmsg.textContent = x.message; } } },
       h("h2", {}, "Changer le mot de passe"), h("div", { class: "grid" }, field("Mot de passe actuel", cur), field("Nouveau (12 caractères min.)", nxt)), pmsg, h("button", { type: "submit" }, "Modifier"));
@@ -704,8 +666,8 @@
 
   // ---------- Paiements (super administrateur) ----------
   let payTab = "tx";
-  const PAY_ST = { pending: "En cours", awaiting_confirmation: "À confirmer", paid: "Payé", failed: "Échoué", cancelled: "Annulé", rejected: "Refusé", duplicate: "Doublon" };
-  const PAY_COLOR = { paid: "#12805c", awaiting_confirmation: "#b7791f", pending: "#6a7189", failed: "#c0392b", rejected: "#c0392b", duplicate: "#e06c00", cancelled: "#6a7189" };
+  const PAY_ST = { pending: "En cours", awaiting_confirmation: "À confirmer", paid: "Payé", failed: "Échoué", cancelled: "Annulé", rejected: "Refusé", duplicate: "Doublon", refund_pending: "Remboursement…", refunded: "Remboursé" };
+  const PAY_COLOR = { paid: "#12805c", awaiting_confirmation: "#b7791f", pending: "#6a7189", failed: "#c0392b", rejected: "#c0392b", duplicate: "#e06c00", cancelled: "#6a7189", refund_pending: "#b7791f", refunded: "#6b5bd2" };
   const KIND_LBL = { cash: "Espèces", card: "Carte", orange_money: "Orange Money", mtn_momo: "MTN MoMo", paypal: "PayPal", bank_transfer: "Virement", other: "Autre" };
   const payPill = (st) => h("span", { class: "pill", style: "color:#fff;border:0;background:" + (PAY_COLOR[st] || "#6a7189") }, PAY_ST[st] || st);
   const fmtMoney = (n, c) => new Intl.NumberFormat("fr-FR").format(n) + " " + (SYM[c] || c);
@@ -717,17 +679,51 @@
     return h("div", {}, h("div", { class: "tabs-in" }, ...tabs.map(([k, l]) => h("button", { class: k === payTab ? "" : "ghost", onclick: () => { payTab = k; render(); } }, l))), h("div", { style: "margin-top:14px" }, body));
   }
 
+
+  // Remboursement : fenêtre de confirmation (mot de passe + 2FA, jamais de saisie dans une boîte « prompt »)
+  function refundDialog(p, done) {
+    const dlg = h("dialog", { class: "dlg" });
+    const viaApi = ["flutterwave", "paypal"].includes(p.provider);
+    const reason = h("input", { maxlength: 200, placeholder: "Motif (visible par le client)" });
+    const pw = h("input", { type: "password", autocomplete: "current-password" });
+    const code = me.totp_enabled ? h("input", { inputmode: "numeric", maxlength: 6, autocomplete: "one-time-code" }) : null;
+    const rec = h("input", { type: "checkbox" }); rec.checked = p.status === "refund_pending";
+    const err = h("p", { class: "err", role: "alert" }), go = h("button", { class: "danger", type: "submit" }, "Confirmer le remboursement");
+    const close = () => { dlg.close(); dlg.remove(); };
+    dlg.append(h("form", { onsubmit: async (e) => {
+      e.preventDefault(); err.textContent = ""; go.disabled = true;
+      try { await api("/api/pay?a=admin_refund", "POST", { paymentId: p.id, reason: reason.value, password: pw.value, code: code ? code.value : "", recordOnly: rec.checked }); close(); done(); }
+      catch (x) { err.textContent = x.message; go.disabled = false; }
+    } },
+      h("h2", {}, "Rembourser " + fmtMoney(p.amount, p.currency)),
+      h("p", { class: "muted" }, (p.customer_name || "Le client") + " · " + (p.property_title || "") + ". " + (viaApi ? "Le montant est renvoyé au client par le fournisseur de paiement (" + (p.provider === "paypal" ? "PayPal" : "Flutterwave") + ")." : "Ce moyen est manuel : le remboursement est enregistré ici, rendez l’argent au client vous-même.")),
+      field("Motif", reason),
+      viaApi ? h("label", { class: "chk" }, rec, "Déjà remboursé hors du site (ne pas appeler le fournisseur)") : "",
+      field("Votre mot de passe", pw), code ? field("Code de double authentification", code) : "", err,
+      h("div", { class: "row", style: "justify-content:flex-end" }, h("button", { type: "button", class: "ghost", onclick: close }, "Annuler"), go)));
+    document.body.append(dlg); dlg.showModal(); reason.focus();
+  }
+
+  // Export comptable : période au choix, fichier CSV ouvrable dans Excel
+  function exportBar() {
+    const t = new Date().toISOString().slice(0, 10), from = h("input", { type: "date", value: t.slice(0, 8) + "01" }), to = h("input", { type: "date", value: t });
+    const link = h("a", { class: "btn ghost", download: "" }, "Exporter en CSV (Excel)");
+    const upd = () => { link.href = "/api/pay?a=export&from=" + from.value + "&to=" + to.value; };
+    from.addEventListener("change", upd); to.addEventListener("change", upd); upd();
+    return h("div", { class: "row", style: "justify-content:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px" }, h("span", { class: "muted" }, "Export comptable :"), from, to, link);
+  }
   function payTxPanel() {
     let st = "";
     const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
     const act = async (path, body) => { try { await api(path, "POST", body); load(); } catch (x) { alert(x.message); } };
     const load = () => api("/api/pay?a=admin_payments" + (st ? "&status=" + st : "")).then((d) => {
       const paid = d.summary.paid.map((p) => fmtMoney(p.total, p.currency)).join(" + ") || "0";
-      const filters = [["", "Toutes"], ["awaiting_confirmation", "À confirmer"], ["paid", "Payées"], ["pending", "En cours"], ["failed", "Échouées"]];
+      const filters = [["", "Toutes"], ["awaiting_confirmation", "À confirmer"], ["paid", "Payées"], ["pending", "En cours"], ["failed", "Échouées"], ["refunded", "Remboursées"]];
       box.replaceChildren(
         h("div", { class: "kpis" },
           h("div", { class: "kpi" + (d.summary.awaiting ? " hot" : "") }, h("div", { class: "kpi-l" }, "À confirmer"), h("div", { class: "kpi-v" }, String(d.summary.awaiting)), h("div", { class: "kpi-s" }, "paiements manuels / espèces")),
-          h("div", { class: "kpi" }, h("div", { class: "kpi-l" }, "Encaissé"), h("div", { class: "kpi-v", style: "font-size:1.3rem" }, paid), h("div", { class: "kpi-s" }, "paiements confirmés"))),
+          h("div", { class: "kpi" }, h("div", { class: "kpi-l" }, "Encaissé"), h("div", { class: "kpi-v", style: "font-size:1.3rem" }, paid), h("div", { class: "kpi-s" }, (d.summary.refunded || []).length ? "dont remboursé : " + d.summary.refunded.map((p) => fmtMoney(p.total, p.currency)).join(" + ") : "paiements confirmés"))),
+        exportBar(),
         h("div", { class: "tabs-in", style: "margin-bottom:12px" }, ...filters.map(([k, l]) => h("button", { class: k === st ? "" : "ghost", onclick: () => { st = k; load(); } }, l))),
         d.rows.length ? table(["Date", "Client", "Bien", "Moyen", "Montant", "Statut", "Référence", "Actions"], d.rows.map((p) => [
           when(p.created_at),
@@ -737,7 +733,9 @@
           h("div", { class: "row", style: "gap:6px;justify-content:flex-start" },
             p.status === "awaiting_confirmation" ? h("button", { onclick: () => { if (confirm("Confirmer la réception de " + fmtMoney(p.amount, p.currency) + " ?")) act("/api/pay?a=admin_confirm", { paymentId: p.id }); } }, "Confirmer") : "",
             p.status === "awaiting_confirmation" ? h("button", { class: "danger", onclick: () => { const r = prompt("Motif du refus (visible par le client) :"); if (r !== null) act("/api/pay?a=admin_reject", { paymentId: p.id, reason: r }); } }, "Refuser") : "",
-            ["pending", "failed", "cancelled"].includes(p.status) && !["manual", "cash"].includes(p.provider) ? h("button", { class: "ghost", onclick: () => act("/api/pay?a=admin_recheck", { paymentId: p.id }) }, "Revérifier") : "")
+            ["pending", "failed", "cancelled"].includes(p.status) && !["manual", "cash"].includes(p.provider) ? h("button", { class: "ghost", onclick: () => act("/api/pay?a=admin_recheck", { paymentId: p.id }) }, "Revérifier") : "",
+            p.status === "paid" ? h("a", { class: "btn ghost", href: "/api/pay?a=receipt&orderId=" + p.order_id, download: "" }, "Reçu") : "",
+            ["paid", "duplicate", "refund_pending"].includes(p.status) ? h("button", { class: "danger", onclick: () => refundDialog(p, load) }, p.status === "refund_pending" ? "Déjà remboursé" : "Rembourser") : "")
         ])) : h("p", { class: "muted" }, "Aucune transaction pour le moment."));
     }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
     load(); return box;
@@ -826,6 +824,40 @@
     });
   }
 
+  // ---------- Visites ----------
+  let visScope = "pending";
+  const VIS_ST = { requested: "À confirmer", confirmed: "Confirmée", declined: "Refusée", cancelled: "Annulée", done: "Effectuée" };
+  const VIS_COLOR = { requested: "#b7791f", confirmed: "#12805c", declined: "#c0392b", cancelled: "#6a7189", done: "#6b5bd2" };
+  const dayLong = (d) => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  function visitsView() {
+    stopPoll();
+    const filters = [["pending", "À confirmer"], ["upcoming", "À venir"], ["all", "Toutes"]];
+    const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
+    const set = async (body) => { try { await api("/api/orders?a=visit_set", "POST", body); render(); } catch (x) { alert(x.message); } };
+    api("/api/orders?a=visits_admin&scope=" + visScope).then((d) => {
+      const card = (v) => {
+        const resched = h("div", { class: "row", style: "justify-content:flex-start;gap:8px;flex-wrap:wrap", hidden: true });
+        const date = h("input", { type: "date", value: v.date, min: d.today }), time = h("select", {}, ...d.slots.map((t) => h("option", { value: t, selected: t === v.time }, t)));
+        resched.append(date, time, h("button", { onclick: () => set({ id: v.id, date: date.value, time: time.value }) }, "Valider la nouvelle date"));
+        const ask = (msg, status) => { const r = prompt(msg, ""); if (r !== null) set({ id: v.id, status, adminNote: r }); };
+        return h("div", { class: "card" },
+          h("div", { class: "row" }, h("strong", {}, v.property_title), h("span", { class: "pill", style: "color:#fff;border:0;background:" + (VIS_COLOR[v.status] || "#6a7189") }, VIS_ST[v.status] || v.status)),
+          h("div", {}, dayLong(v.date) + " à " + v.time),
+          h("div", { class: "muted" }, (v.customer_name || "Client") + " · " + (v.customer_phone || v.customer_email || "")),
+          v.note ? h("div", { class: "muted" }, "Message : " + v.note) : "", v.admin_note ? h("div", { class: "muted" }, "Note : " + v.admin_note) : "",
+          h("div", { class: "row", style: "justify-content:flex-start;gap:8px;flex-wrap:wrap;margin-top:8px" },
+            v.status === "requested" ? h("button", { onclick: () => ask("Message pour le client (facultatif) :", "confirmed") }, "Confirmer") : "",
+            v.status === "requested" ? h("button", { class: "danger", onclick: () => ask("Motif du refus (visible par le client) :", "declined") }, "Refuser") : "",
+            ["requested", "confirmed"].includes(v.status) ? h("button", { class: "ghost", onclick: () => { resched.hidden = !resched.hidden; } }, "Reprogrammer") : "",
+            v.status === "confirmed" ? h("button", { class: "ghost", onclick: () => set({ id: v.id, status: "done" }) }, "Marquer effectuée") : "",
+            v.status === "confirmed" ? h("button", { class: "danger", onclick: () => ask("Motif de l’annulation (visible par le client) :", "cancelled") }, "Annuler") : ""),
+          resched);
+      };
+      box.replaceChildren(...(d.visits.length ? d.visits.map(card) : [h("p", { class: "muted" }, visScope === "pending" ? "Aucune demande de visite à traiter." : "Aucune visite.")]));
+    }).catch((x) => box.replaceChildren(h("p", { class: "err" }, x.message)));
+    return h("div", {}, h("div", { class: "tabs-in" }, ...filters.map(([k, l]) => h("button", { class: k === visScope ? "" : "ghost", onclick: () => { visScope = k; render(); } }, l))), h("div", { style: "margin-top:14px;display:grid;gap:12px" }, box));
+  }
+
   // Modules regroupés : un seul accès dans le menu, des onglets à l'intérieur
   const SUBS = {
     clients: [["clients", "Comptes"], ["activity", "Activité"]],
@@ -838,8 +870,8 @@
     return m ? h("div", { class: "tabs-in", style: "margin-bottom:14px" }, ...SUBS[m].map(([id, l, cnt]) => h("button", { class: id === tab ? "" : "ghost", onclick: () => { tab = id; render(); } }, l, cnt && counts[cnt] ? h("span", { class: "badge" }, String(counts[cnt])) : ""))) : "";
   };
   const NAV = (sup) => [
-    ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["payments", "Paiements", null, 1], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
-    ["Système", [["whatsapp", "WhatsApp", null, 1], ["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
+    ["Pilotage", [["dashboard", "Tableau de bord"], ["annonces", "Annonces"], ["orders", "Commandes", ["pendingOrders"]], ["visits", "Visites", ["pendingVisits"]], ["payments", "Paiements", null, 1], ["clients", "Clients", null, 1], ["chat", "Messages", ["chat", "notifications", "suggestions"]]]],
+    ["Système", [["supervision", "Supervision", null, 1], ["admins", "Équipe & sécurité", null, 1], ["profile", "Mon profil"]]]
   ].map(([g, items]) => [g, items.filter((i) => !i[3] || sup)]).filter(([, items]) => items.length);
 
   // ----- Menu mobile : barre fixe en bas (ne bouge pas, ne s'étire pas) -----
@@ -865,7 +897,7 @@
     if (!me || /^#reset=/.test(location.hash)) { app.replaceChildren(loginView()); return; }
     try { counts = await api("/api/console?a=counts"); } catch (e) {}
     const sup = me.role === "super_admin";
-    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), "Maison Admin"));
+    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "G"), "Gestion Immobilière"));
     for (const [g, items] of NAV(sup)) {
       nav.append(h("div", { class: "grp" }, g));
       for (const [id, label, cnt] of items) {
@@ -878,9 +910,9 @@
     const go = (id) => { tab = id; window._cust = null; render(); };
     const body = tab === "form" ? propForm(window._edit) : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
-      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "payments" && sup ? paymentsView() : tab === "whatsapp" && sup ? whatsappView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "visits" ? visitsView() : tab === "payments" && sup ? paymentsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
-    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", payments: "Paiements", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
+    const titles = { dashboard: "Tableau de bord", annonces: "Annonces", form: "Annonce", orders: "Commandes", visits: "Visites", payments: "Paiements", clients: "Clients", chat: "Messages", admins: "Équipe & sécurité", supervision: "Supervision", profile: "Mon profil" };
     app.replaceChildren(h("div", { class: "shell" }, nav, h("section", { class: "main" },
       h("header", { class: "top" }, h("h1", {}, titles[MODULE[tab] || tab] || "Tableau de bord"), h("div", { class: "row" },
         h("a", { class: "btn ghost desk-only", href: "/" }, "Voir le site"), h("button", { class: "ghost desk-only", onclick: async () => { await api("/api/auth?a=logout", "POST"); me = null; render(); } }, "Déconnexion"))),

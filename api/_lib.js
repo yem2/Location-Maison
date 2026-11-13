@@ -77,13 +77,13 @@ export function ensureSchema() {
 // ---------- Mot de passe oublié ----------
 // E-mail envoyé via Resend (variables RESEND_API_KEY et MAIL_FROM). Renvoie false si non configuré ou en échec.
 export const mailConfigured = () => !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
-export async function sendMail(to, subject, text) {
+export async function sendMail(to, subject, text, attachments) {
   if (!mailConfigured()) return false;
   try {
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST", signal: AbortSignal.timeout(8000),
       headers: { Authorization: "Bearer " + process.env.RESEND_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject, text })
+      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject, text, ...(attachments && attachments.length ? { attachments } : {}) })
     });
     return r.ok;
   } catch { return false; }
@@ -174,7 +174,7 @@ export const logActivity = (customerId, action, propertyId = null, detail = "") 
 
 export async function notifyAdmins(type, title, detail = "", customerId = null) {
   await sql`INSERT INTO admin_notifications (type, title, detail, customer_id) VALUES (${type}, ${String(title).slice(0, 200)}, ${String(detail).slice(0, 400)}, ${customerId})`;
-  if (process.env.WA_ACCESS_TOKEN || waGatewayOn()) {
+  if (waEnabled()) {
     const supers = await sql`SELECT id FROM users WHERE role = 'super_admin' AND active`;
     for (const s of supers) await maybeWhatsApp("user", s.id, `${title} — ${detail}`);
   }
@@ -185,7 +185,8 @@ export async function notifyCustomer(customerId, text) {
   await maybeWhatsApp("customer", customerId, text);
 }
 
-// ---------- WhatsApp (API Cloud de Meta) : envoyé seulement si le destinataire a accepté et n'est pas connecté ----------
+// ---------- WhatsApp : Green API (instance personnelle) ou API Cloud de Meta ----------
+// Envoyé seulement si le destinataire a accepté et n'est pas connecté.
 export function normalizePhone(p) {
   let d = String(p || "").replace(/\D/g, "");
   if (d.startsWith("00")) d = d.slice(2);
@@ -193,51 +194,63 @@ export function normalizePhone(p) {
   return d.length >= 8 && d.length <= 15 ? d : null;
 }
 
-// Green API (« WhatsApp par QR code », service géré) : identifiants uniquement côté serveur (Vercel).
-export const waGatewayOn = () => !!(process.env.GREEN_API_ID && process.env.GREEN_API_TOKEN);
-export async function gwCall(path, { method = "GET", body, timeout = 8000 } = {}) {
-  if (!waGatewayOn()) throw new Error("Green API non configuré");
-  const base = String(process.env.GREEN_API_URL || "https://api.green-api.com").replace(/\/+$/, "");
-  const id = encodeURIComponent(process.env.GREEN_API_ID), tok = encodeURIComponent(process.env.GREEN_API_TOKEN);
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  try {
-    const r = await fetch(`${base}/waInstance${id}/${path}/${tok}`, {
-      method, signal: ctrl.signal,
-      headers: body ? { "Content-Type": "application/json" } : {},
-      body: body ? JSON.stringify(body) : undefined
-    });
-    const json = await r.json().catch(() => ({}));
-    return { ok: r.ok, status: r.status, json };
-  } finally { clearTimeout(timer); }
+// Green API : ID_INSTANCE, API_TOKEN_INSTANCE, API_URL (les copies en « …1 » sont prioritaires). Meta : WA_ACCESS_TOKEN, WA_PHONE_ID, WA_TEMPLATE.
+function waConfig() {
+  const e = process.env;
+  const id = String(e.ID_INSTANCE1 || e.ID_INSTANCE || e.GREEN_API_ID_INSTANCE || "").trim();
+  const token = String(e.API_TOKEN_INSTANCE1 || e.API_TOKEN_INSTANCE || e.GREEN_API_TOKEN || "").trim();
+  let url = String(e.API_URL1 || e.API_URL || e.GREEN_API_URL || "").trim();
+  if (id && token) {
+    if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+    return { provider: "greenapi", id, token, url: (url || `https://${id.slice(0, 4)}.api.greenapi.com`).replace(/\/+$/, "") };
+  }
+  if (e.WA_ACCESS_TOKEN && e.WA_PHONE_ID && e.WA_TEMPLATE) return { provider: "meta" };
+  return null;
 }
-export async function gwSend(to, text) {
-  try {
-    const r = await gwCall("sendMessage", { method: "POST", timeout: 6000, body: { chatId: `${to}@c.us`, message: String(text).replace(/\s+/g, " ").slice(0, 900) } });
-    return r.ok && !!r.json?.idMessage;
-  } catch { return false; }
-}
+export const waEnabled = () => !!waConfig();
+const waBrand = () => process.env.COMPANY_NAME || "Gestion Immobilière";
 
-async function waSend(to, text) {
-  if (waGatewayOn()) return gwSend(to, "Maison : " + text);
-  const { WA_ACCESS_TOKEN: tok, WA_PHONE_ID: pid, WA_TEMPLATE: tpl } = process.env;
-  if (!tok || !pid || !tpl) return false;
+async function waRequest(to, text) {
+  const c = waConfig();
+  if (!c) return { ok: false, error: "WhatsApp n’est pas configuré sur le serveur." };
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 4000);
+  const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const r = await fetch(`https://graph.facebook.com/v21.0/${pid}/messages`, {
+    if (c.provider === "greenapi") {
+      const r = await fetch(`${c.url}/waInstance${encodeURIComponent(c.id)}/sendMessage/${encodeURIComponent(c.token)}`, {
+        method: "POST", signal: ctrl.signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: `${to}@c.us`, message: `${waBrand()} — ${String(text).slice(0, 1000)}` })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.idMessage) return { ok: true, error: "" };
+      return { ok: false, error: r.status === 401 || r.status === 403 ? "Identifiants Green API refusés (vérifiez ID_INSTANCE et API_TOKEN_INSTANCE)." : r.status === 466 || r.status === 429 ? "Quota Green API atteint (offre Developer limitée)." : (j.message || `Green API : erreur ${r.status}`) };
+    }
+    const r = await fetch(`https://graph.facebook.com/v21.0/${process.env.WA_PHONE_ID}/messages`, {
       method: "POST", signal: ctrl.signal,
-      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: tpl, language: { code: process.env.WA_LANG || "fr" },
+      headers: { Authorization: `Bearer ${process.env.WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: process.env.WA_TEMPLATE, language: { code: process.env.WA_LANG || "fr" },
         components: [{ type: "body", parameters: [{ type: "text", text: String(text).replace(/\s+/g, " ").slice(0, 500) }] }] } })
     });
-    return r.ok;
-  } catch { return false; } finally { clearTimeout(timer); }
+    return { ok: r.ok, error: r.ok ? "" : `Meta : erreur ${r.status}` };
+  } catch (e) { return { ok: false, error: e && e.name === "AbortError" ? "Délai dépassé : WhatsApp n’a pas répondu." : "Connexion à WhatsApp impossible." }; }
+  finally { clearTimeout(timer); }
+}
+const waSend = async (to, text) => (await waRequest(to, text)).ok;
+export const waTest = waRequest;
+export async function waState() {
+  const c = waConfig();
+  if (!c) return { provider: null, state: "non configuré" };
+  if (c.provider !== "greenapi") return { provider: "meta", state: "configuré" };
+  try {
+    const r = await fetch(`${c.url}/waInstance${encodeURIComponent(c.id)}/getStateInstance/${encodeURIComponent(c.token)}`, { signal: AbortSignal.timeout(6000) });
+    const j = await r.json().catch(() => ({}));
+    return { provider: "greenapi", state: j.stateInstance || (r.ok ? "inconnu" : `erreur ${r.status}`) };
+  } catch { return { provider: "greenapi", state: "injoignable" }; }
 }
 
 export async function maybeWhatsApp(kind, id, text) {
   try {
-    if (!process.env.WA_ACCESS_TOKEN && !waGatewayOn()) return;
+    if (!waEnabled()) return;
     const rows = kind === "customer"
       ? await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM customers WHERE id = ${id}`
       : await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM users WHERE id = ${id}`;
