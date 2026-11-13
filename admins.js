@@ -1,8 +1,8 @@
-import { sql, send, requireUser, hashPassword, audit, str, emailOk } from "./_lib.js";
+import { sql, send, requireUser, hashPassword, audit, str, emailOk , wrap } from "./_lib.js";
 
 const pwOk = (p) => typeof p === "string" && p.length >= 10 && p.length <= 200;
 
-export default async function handler(req, res) {
+async function handler(req, res) {
   const me = await requireUser(req, res, "super_admin");
   if (!me) return;
   if (req.method === "GET") {
@@ -28,6 +28,10 @@ export default async function handler(req, res) {
       await sql`DELETE FROM sessions WHERE user_id = ${id}`;
       await audit(me.id, "admin.password", target.email);
     }
+    if (b.disconnect === true && target.id !== me.id) {
+      await sql`DELETE FROM sessions WHERE user_id = ${id}`;
+      await audit(me.id, "admin.disconnect", target.email);
+    }
     if (typeof b.active === "boolean" && target.id !== me.id) {
       await sql`UPDATE users SET active = ${b.active} WHERE id = ${id}`;
       if (!b.active) await sql`DELETE FROM sessions WHERE user_id = ${id}`;
@@ -43,3 +47,5 @@ export default async function handler(req, res) {
   }
   send(res, 405, { error: "Méthode refusée" });
 }
+
+export default wrap("admins", handler);
