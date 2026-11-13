@@ -3,6 +3,14 @@ import { sql, send, requireUser, audit , wrap } from "./_lib.js";
 
 const MAX_BYTES = 1_500_000;
 
+// La table des images est créée automatiquement si elle n'existe pas (évite l'erreur « relation images n'existe pas »).
+let tableP;
+function ensureImages() {
+  tableP ??= sql`CREATE TABLE IF NOT EXISTS images (id text PRIMARY KEY, content_type text NOT NULL, data_b64 text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`
+    .then(() => true).catch(() => { tableP = null; return false; });
+  return tableP;
+}
+
 function sniff(buf) {
   if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
   if (buf.slice(0, 4).toString("hex") === "89504e47") return "image/png";
@@ -11,6 +19,7 @@ function sniff(buf) {
 }
 
 async function handler(req, res) {
+  await ensureImages();
   if (req.method === "GET") {
     const id = String(req.query.id || "");
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();

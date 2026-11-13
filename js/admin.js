@@ -17,7 +17,7 @@
     const r = await fetch(path, { method, credentials: "same-origin", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
     const data = await r.json().catch(() => ({}));
     if (r.status === 401 && me) { me = null; render(); }
-    if (!r.ok) { const e = new Error(data.error || "Erreur " + r.status); e.data = data; throw e; }
+    if (!r.ok) { const e = new Error(data.error || (r.status === 413 ? "Fichier trop lourd pour le serveur (4,5 Mo maximum)." : r.status === 504 ? "Le serveur a mis trop de temps à répondre, réessayez." : r.status === 403 ? "Action refusée (rechargez la page puis réessayez)." : "Erreur " + r.status)); e.data = data; throw e; }
     return data;
   }
   const field = (label, input) => h("div", {}, h("label", {}, label), input);
@@ -28,14 +28,32 @@
   let counts = { notifications: 0, pendingOrders: 0, chat: 0, suggestions: 0 };
 
   // Réduit la photo (1600 px max, JPEG) avant l'envoi
+  // Décode la photo avec le moyen le plus compatible (PC, Android, iPhone), puis la réduit (1600 px max, JPEG)
+  async function decodeImage(file) {
+    if (typeof createImageBitmap === "function") {
+      try { return await createImageBitmap(file, { imageOrientation: "from-image" }); }
+      catch (e) { try { return await createImageBitmap(file); } catch (e2) { /* on essaie la méthode suivante */ } }
+    }
+    return await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file), img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Photo illisible par ce navigateur : utilisez une image JPG, PNG ou WebP.")); };
+      img.src = url;
+    });
+  }
   async function shrink(file) {
-    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
-    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    if (!file) throw new Error("Aucune photo choisie.");
+    if (file.size > 40_000_000) throw new Error("Photo trop volumineuse (40 Mo maximum avant réduction).");
+    const bmp = await decodeImage(file), bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height;
+    if (!bw || !bh) throw new Error("Photo illisible.");
+    const s = Math.min(1, 1600 / Math.max(bw, bh));
+    const c = document.createElement("canvas"); c.width = Math.round(bw * s); c.height = Math.round(bh * s);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); // fond blanc (PNG transparents)
+    ctx.drawImage(bmp, 0, 0, c.width, c.height);
     for (const q of [0.82, 0.7, 0.55, 0.4]) {
       const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
-      if (blob.size <= 1_100_000) return await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1]); fr.readAsDataURL(blob); });
+      if (!blob) throw new Error("Impossible de préparer la photo sur cet appareil.");
+      if (blob.size <= 1_100_000) return await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1]); fr.onerror = () => j(new Error("Lecture de la photo impossible.")); fr.readAsDataURL(blob); });
     }
     throw new Error("Photo trop lourde, choisissez-en une plus petite.");
   }
@@ -609,7 +627,7 @@
     { id: "annonces", label: "Annonces", icon: "⌂", tabs: [["annonces", "Annonces"]], also: ["form"] },
     { id: "demandes", label: "Demandes & paiements", short: "Demandes", icon: "☰", tabs: [["orders", "Commandes", "pendingOrders"], ["payments", "Paiements", "paymentsReview"], ["contracts", "Contrats & reçus"], ["paysettings", "Moyens de paiement", null, 1]] },
     { id: "clients", label: "Clients", icon: "☺", sup: 1, tabs: [["clients", "Clients"], ["activity", "Activité"]] },
-    { id: "messagerie", label: "Messagerie", short: "Messages", icon: "✉", tabs: [["chat", "Chat clients", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Formulaire de contact"], ["suggestions", "Suggestions", "suggestions"]] },
+    { id: "messagerie", label: "Messagerie", short: "Messages", icon: "✉", tabs: [["chat", "Chat clients", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Formulaire de contact"], ["suggestions", "Suggestions", "suggestions"], ["whatsapp", "WhatsApp", null, 1]] },
     { id: "supervision", label: "Supervision", icon: "◉", sup: 1, tabs: [["supervision", "Supervision"]] },
     { id: "equipe", label: "Équipe & sécurité", short: "Équipe", icon: "⚙", sup: 1, tabs: [["admins", "Administrateurs"], ["audit", "Journal de sécurité"]] },
     { id: "archives", label: "Archives", icon: "▣", sup: 1, tabs: [["archives", "Archives"]] },
@@ -631,7 +649,7 @@
     const open = (g) => { tab = lastSub[g.id] && g.tabs.some((x) => x[0] === lastSub[g.id]) ? lastSub[g.id] : g.tabs[0][0]; window._cust = null; render(); };
     const badge = (n) => (n ? h("span", { class: "badge" }, String(n)) : "");
 
-    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), h("span", { class: "brand-t" }, "Location et vente immobilière", h("small", {}, "Administration"))));
+    const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), h("span", { class: "brand-t" }, "Gestion immobilière", h("small", {}, "Administration"))));
     for (const g of groups) nav.append(h("button", { class: "nav" + (g === cur ? " on" : ""), onclick: () => open(g) }, h("span", {}, g.label), badge(gcount(g))));
     nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur")))));
 
@@ -639,7 +657,7 @@
     const body = tab === "form" ? propForm(window._edit) : tab === "archives" && sup ? window.AdminArch.view(ctx) : tab === "payments" ? window.AdminPay.transactions(ctx) : tab === "contracts" ? window.AdminDocs.view(ctx) : tab === "paysettings" && sup ? window.AdminPay.settings(ctx)
       : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
-      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
+      : tab === "chat" ? chatView() : tab === "whatsapp" && sup ? window.AdminWhatsApp.view(ctx) : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
     const title = tab === "form" ? "Annonce" : cur.tabs.length > 1 ? cur.label : cur.tabs[0][1];
     const subtabs = cur.tabs.length > 1 && tab !== "form" ? h("div", { class: "subtabs", role: "tablist" }, cur.tabs.map(([id, label, cnt]) =>

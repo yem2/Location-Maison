@@ -1,9 +1,11 @@
 import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap, archiveSnapshot, ensureArchives, decrypt, notifyAdmins } from "./_lib.js";
+import { waHandler } from "./_whatsapp.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
   if (!me) return;
   const a = req.query.a;
+  if (typeof a === "string" && a.startsWith("wa_")) return waHandler(req, res, me);
   const isSuper = me.role === "super_admin";
 
   // ----- Archives (super administrateur) : lister, restaurer, supprimer définitivement -----
