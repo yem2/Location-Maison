@@ -27,8 +27,7 @@ const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
 export function cookie(req, name) {
   const m = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith(name + "="));
-  if (!m) return "";
-  try { return decodeURIComponent(m.slice(name.length + 1)); } catch { return ""; }
+  return m ? decodeURIComponent(m.slice(name.length + 1)) : "";
 }
 
 export async function createSession(res, userId) {
@@ -47,12 +46,14 @@ export async function destroySession(req, res) {
 export async function currentUser(req) {
   const t = cookie(req, "sid");
   if (!t) return null;
-  const rows = await sql`SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled, u.last_seen FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND u.active`;
-  const u = rows[0] || null;
-  if (u && (!u.last_seen || Date.now() - new Date(u.last_seen).getTime() > 60000)) await sql`UPDATE users SET last_seen = now() WHERE id = ${u.id}`;
-  if (u) delete u.last_seen;
-  return u;
+  // Une seule requête : lit la session ET rafraîchit « dernière activité » (au plus une fois par minute)
+  const rows = await sql`WITH cur AS (
+      SELECT u.id, u.email, u.name, u.role, u.phone, u.whatsapp_optin, u.totp_enabled FROM sessions ss JOIN users u ON u.id = ss.user_id
+      WHERE ss.token_hash = ${sha(t)} AND ss.expires_at > now() AND u.active
+    ), seen AS (
+      UPDATE users SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
+    ) SELECT * FROM cur`;
+  return rows[0] || null;
 }
 
 // Colonnes ajoutées par migration-superadmin.sql (archivage des biens, profil des administrateurs).
@@ -63,17 +64,61 @@ export function ensureSchema() {
     try {
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS archived boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
       await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS bio text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS city text NOT NULL DEFAULT ''`;
+      await sql`ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz`;
+      await sql`CREATE TABLE IF NOT EXISTS password_resets (
+        id bigserial PRIMARY KEY, kind text NOT NULL, account_id bigint NOT NULL, token_hash text NOT NULL UNIQUE,
+        expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
       return true;
     } catch { return false; }
   })().then((ok) => { if (!ok) schemaP = null; return ok; });
   return schemaP;
 }
 
+// ---------- Mot de passe oublié ----------
+// E-mail envoyé via Resend (variables RESEND_API_KEY et MAIL_FROM). Renvoie false si non configuré ou en échec.
+export const mailConfigured = () => !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
+export async function sendMail(to, subject, text, attachments) {
+  if (!mailConfigured()) return false;
+  try {
+    const r = await fetch("https://api.resend.com/emails", {
+      method: "POST", signal: AbortSignal.timeout(8000),
+      headers: { Authorization: "Bearer " + process.env.RESEND_API_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: process.env.MAIL_FROM, to: [to], subject, text, ...(attachments && attachments.length ? { attachments } : {}) })
+    });
+    return r.ok;
+  } catch { return false; }
+}
+const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
+// Adresse du site pour les liens : SITE_URL en priorité (évite toute falsification de l'en-tête Host)
+export const siteUrl = (req) => (process.env.SITE_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? "https://" + process.env.VERCEL_PROJECT_PRODUCTION_URL : "https://" + req.headers.host)).replace(/\/+$/, "");
+
+// Crée un lien à usage unique (30 min) et l'envoie. Silencieux si le compte n'existe pas ou si un e-mail est parti il y a moins de 2 minutes.
+export async function startReset(req, kind, account, path, label) {
+  if (!mailConfigured() || !(await ensureSchema())) return false;
+  const [recent] = await sql`SELECT 1 FROM password_resets WHERE kind = ${kind} AND account_id = ${account.id} AND created_at > now() - interval '2 minutes'`;
+  if (recent) return true;
+  const token = crypto.randomBytes(32).toString("hex");
+  await sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${account.id} AND used_at IS NULL`;
+  await sql`INSERT INTO password_resets (kind, account_id, token_hash, expires_at) VALUES (${kind}, ${account.id}, ${sha256(token)}, now() + interval '30 minutes')`;
+  const link = siteUrl(req) + path + "#reset=" + token;
+  const sent = await sendMail(account.email, "Réinitialisation de votre mot de passe",
+    `Bonjour${account.name ? " " + account.name : ""},\n\nVous avez demandé à réinitialiser le mot de passe de votre ${label}.\nCliquez sur ce lien (valable 30 minutes, utilisable une seule fois) :\n\n${link}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.`);
+  if (!sent) await sql`DELETE FROM password_resets WHERE token_hash = ${sha256(token)}`; // échec d'envoi : on peut redemander tout de suite
+  return sent;
+}
+// Retrouve le compte d'un lien valide (sans le consommer)
+export async function findReset(kind, token) {
+  if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token) || !(await ensureSchema())) return null;
+  const [r] = await sql`SELECT id, account_id FROM password_resets WHERE kind = ${kind} AND token_hash = ${sha256(token)} AND used_at IS NULL AND expires_at > now()`;
+  return r || null;
+}
+export const burnResets = (kind, accountId) => sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${accountId} AND used_at IS NULL`;
+
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
   if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
   const o = req.headers.origin;
-  try { return !!o && new URL(o).host === req.headers.host; } catch { return false; }
+  return !!o && new URL(o).host === req.headers.host;
 }
 
 // Exige un utilisateur connecté (et un rôle si demandé). Renvoie l'utilisateur ou null (réponse déjà envoyée).
@@ -108,12 +153,13 @@ export async function destroyCustomerSession(req, res) {
 export async function currentCustomer(req) {
   const t = cookie(req, "csid");
   if (!t) return null;
-  const rows = await sql`SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin, c.last_seen FROM customer_sessions s JOIN customers c ON c.id = s.customer_id
-    WHERE s.token_hash = ${sha(t)} AND s.expires_at > now() AND c.active`;
-  const c = rows[0] || null;
-  if (c && (!c.last_seen || Date.now() - new Date(c.last_seen).getTime() > 60000)) await sql`UPDATE customers SET last_seen = now() WHERE id = ${c.id}`;
-  if (c) delete c.last_seen;
-  return c;
+  const rows = await sql`WITH cur AS (
+      SELECT c.id, c.name, c.email, c.phone, c.whatsapp_optin FROM customer_sessions cs JOIN customers c ON c.id = cs.customer_id
+      WHERE cs.token_hash = ${sha(t)} AND cs.expires_at > now() AND c.active
+    ), seen AS (
+      UPDATE customers SET last_seen = now() WHERE id IN (SELECT id FROM cur) AND (last_seen IS NULL OR last_seen < now() - interval '1 minute') RETURNING id
+    ) SELECT * FROM cur`;
+  return rows[0] || null;
 }
 
 export async function requireCustomer(req, res) {
@@ -128,7 +174,7 @@ export const logActivity = (customerId, action, propertyId = null, detail = "") 
 
 export async function notifyAdmins(type, title, detail = "", customerId = null) {
   await sql`INSERT INTO admin_notifications (type, title, detail, customer_id) VALUES (${type}, ${String(title).slice(0, 200)}, ${String(detail).slice(0, 400)}, ${customerId})`;
-  if (process.env.WA_ACCESS_TOKEN) {
+  if (waEnabled()) {
     const supers = await sql`SELECT id FROM users WHERE role = 'super_admin' AND active`;
     for (const s of supers) await maybeWhatsApp("user", s.id, `${title} — ${detail}`);
   }
@@ -139,7 +185,8 @@ export async function notifyCustomer(customerId, text) {
   await maybeWhatsApp("customer", customerId, text);
 }
 
-// ---------- WhatsApp (API Cloud de Meta) : envoyé seulement si le destinataire a accepté et n'est pas connecté ----------
+// ---------- WhatsApp : Green API (instance personnelle) ou API Cloud de Meta ----------
+// Envoyé seulement si le destinataire a accepté et n'est pas connecté.
 export function normalizePhone(p) {
   let d = String(p || "").replace(/\D/g, "");
   if (d.startsWith("00")) d = d.slice(2);
@@ -147,25 +194,63 @@ export function normalizePhone(p) {
   return d.length >= 8 && d.length <= 15 ? d : null;
 }
 
-async function waSend(to, text) {
-  const { WA_ACCESS_TOKEN: tok, WA_PHONE_ID: pid, WA_TEMPLATE: tpl } = process.env;
-  if (!tok || !pid || !tpl) return false;
+// Green API : ID_INSTANCE, API_TOKEN_INSTANCE, API_URL (les copies en « …1 » sont prioritaires). Meta : WA_ACCESS_TOKEN, WA_PHONE_ID, WA_TEMPLATE.
+function waConfig() {
+  const e = process.env;
+  const id = String(e.ID_INSTANCE1 || e.ID_INSTANCE || e.GREEN_API_ID_INSTANCE || "").trim();
+  const token = String(e.API_TOKEN_INSTANCE1 || e.API_TOKEN_INSTANCE || e.GREEN_API_TOKEN || "").trim();
+  let url = String(e.API_URL1 || e.API_URL || e.GREEN_API_URL || "").trim();
+  if (id && token) {
+    if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+    return { provider: "greenapi", id, token, url: (url || `https://${id.slice(0, 4)}.api.greenapi.com`).replace(/\/+$/, "") };
+  }
+  if (e.WA_ACCESS_TOKEN && e.WA_PHONE_ID && e.WA_TEMPLATE) return { provider: "meta" };
+  return null;
+}
+export const waEnabled = () => !!waConfig();
+const waBrand = () => process.env.COMPANY_NAME || "Gestion Immobilière";
+
+async function waRequest(to, text) {
+  const c = waConfig();
+  if (!c) return { ok: false, error: "WhatsApp n’est pas configuré sur le serveur." };
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 4000);
+  const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const r = await fetch(`https://graph.facebook.com/v21.0/${pid}/messages`, {
+    if (c.provider === "greenapi") {
+      const r = await fetch(`${c.url}/waInstance${encodeURIComponent(c.id)}/sendMessage/${encodeURIComponent(c.token)}`, {
+        method: "POST", signal: ctrl.signal, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chatId: `${to}@c.us`, message: `${waBrand()} — ${String(text).slice(0, 1000)}` })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j.idMessage) return { ok: true, error: "" };
+      return { ok: false, error: r.status === 401 || r.status === 403 ? "Identifiants Green API refusés (vérifiez ID_INSTANCE et API_TOKEN_INSTANCE)." : r.status === 466 || r.status === 429 ? "Quota Green API atteint (offre Developer limitée)." : (j.message || `Green API : erreur ${r.status}`) };
+    }
+    const r = await fetch(`https://graph.facebook.com/v21.0/${process.env.WA_PHONE_ID}/messages`, {
       method: "POST", signal: ctrl.signal,
-      headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: tpl, language: { code: process.env.WA_LANG || "fr" },
+      headers: { Authorization: `Bearer ${process.env.WA_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", to, type: "template", template: { name: process.env.WA_TEMPLATE, language: { code: process.env.WA_LANG || "fr" },
         components: [{ type: "body", parameters: [{ type: "text", text: String(text).replace(/\s+/g, " ").slice(0, 500) }] }] } })
     });
-    return r.ok;
-  } catch { return false; } finally { clearTimeout(timer); }
+    return { ok: r.ok, error: r.ok ? "" : `Meta : erreur ${r.status}` };
+  } catch (e) { return { ok: false, error: e && e.name === "AbortError" ? "Délai dépassé : WhatsApp n’a pas répondu." : "Connexion à WhatsApp impossible." }; }
+  finally { clearTimeout(timer); }
+}
+const waSend = async (to, text) => (await waRequest(to, text)).ok;
+export const waTest = waRequest;
+export async function waState() {
+  const c = waConfig();
+  if (!c) return { provider: null, state: "non configuré" };
+  if (c.provider !== "greenapi") return { provider: "meta", state: "configuré" };
+  try {
+    const r = await fetch(`${c.url}/waInstance${encodeURIComponent(c.id)}/getStateInstance/${encodeURIComponent(c.token)}`, { signal: AbortSignal.timeout(6000) });
+    const j = await r.json().catch(() => ({}));
+    return { provider: "greenapi", state: j.stateInstance || (r.ok ? "inconnu" : `erreur ${r.status}`) };
+  } catch { return { provider: "greenapi", state: "injoignable" }; }
 }
 
 export async function maybeWhatsApp(kind, id, text) {
   try {
-    if (!process.env.WA_ACCESS_TOKEN) return;
+    if (!waEnabled()) return;
     const rows = kind === "customer"
       ? await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM customers WHERE id = ${id}`
       : await sql`SELECT phone, whatsapp_optin, last_seen, last_wa FROM users WHERE id = ${id}`;
@@ -217,64 +302,28 @@ export function verifyTotp(secret, code) {
 }
 
 // ---------- Limitation de débit (anti-abus), par adresse IP ----------
-let idxP;
-function ensureIndexes() {
-  idxP ??= (async () => {
-    const run = async (p) => { try { await p; } catch { /* colonne ou table absente : on ignore */ } };
-    await run(sql`CREATE INDEX IF NOT EXISTS rate_hits_key_at_idx ON rate_hits (key, at)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS orders_customer_idx ON orders (customer_id)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS orders_property_status_idx ON orders (property_id, status)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS activity_customer_idx ON activity (customer_id, created_at DESC)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS customer_notifications_idx ON customer_notifications (customer_id, created_at DESC)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS messages_created_idx ON messages (created_at DESC)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS audit_log_created_idx ON audit_log (created_at DESC)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id)`);
-    await run(sql`CREATE INDEX IF NOT EXISTS customer_sessions_customer_idx ON customer_sessions (customer_id)`);
-  })();
-  return idxP;
-}
-// Limitation de débit par adresse IP : une seule requête SQL (comptage + enregistrement), nettoyage rare.
 export async function throttle(req, res, key, max, windowSec) {
   const ip = String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "?").trim().slice(0, 64);
   const k = `${key}:${ip}`;
-  ensureIndexes();
-  let allowed;
-  try {
-    const [r] = await sql`WITH c AS (SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k}::text AND at > now() - make_interval(secs => ${windowSec})),
+  if (Math.random() < 0.02) await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`; // nettoyage occasionnel
+  // Une seule requête : compte les essais récents et enregistre celui-ci s'il reste de la place
+  const [r] = await sql`WITH c AS (SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})),
       i AS (INSERT INTO rate_hits (key) SELECT ${k}::text WHERE (SELECT n FROM c) < ${max}::int RETURNING 1)
-      SELECT (SELECT count(*)::int FROM i) AS ok`;
-    allowed = r?.ok === 1;
-  } catch {
-    const [{ n }] = await sql`SELECT count(*)::int AS n FROM rate_hits WHERE key = ${k} AND at > now() - make_interval(secs => ${windowSec})`;
-    allowed = n < max;
-    if (allowed) await sql`INSERT INTO rate_hits (key) VALUES (${k})`;
-  }
-  if (Math.random() < 0.02) await sql`DELETE FROM rate_hits WHERE at < now() - interval '1 day'`;
-  if (!allowed) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
+    SELECT (SELECT count(*) FROM i)::int AS added`;
+  if (!r || !r.added) { send(res, 429, { error: "Trop de tentatives, réessayez dans quelques minutes." }); return false; }
   return true;
 }
 
 // ---------- Supervision : journal automatique de toutes les API ----------
 export const clientIp = (req) => String(req.headers["x-real-ip"] || String(req.headers["x-forwarded-for"] || "").split(",")[0] || "").trim().slice(0, 64);
 
-const statBuf = new Map();
-let statFlushAt = Date.now();
-async function flushStats() {
-  if (!statBuf.size) return;
-  const rows = [...statBuf.entries()]; statBuf.clear(); statFlushAt = Date.now();
-  const api = rows.map(([k]) => k.split("|")[0]), cls = rows.map(([k]) => k.split("|")[1]), n = rows.map(([, v]) => v.n), ms = rows.map(([, v]) => v.ms);
-  await sql`INSERT INTO api_stats (day, api, class, n, ms) SELECT current_date, t.a, t.c, t.n, t.ms FROM unnest(${api}::text[], ${cls}::text[], ${n}::int[], ${ms}::bigint[]) AS t(a, c, n, ms)
-    ON CONFLICT (day, api, class) DO UPDATE SET n = api_stats.n + EXCLUDED.n, ms = api_stats.ms + EXCLUDED.ms`;
-}
 async function record(name, req, status, ms, err) {
   if (name === "image" && status < 400) return; // trop de volume
-  const key = `${name}|${Math.floor(status / 100)}xx`, cur = statBuf.get(key) || { n: 0, ms: 0 };
-  statBuf.set(key, { n: cur.n + 1, ms: cur.ms + ms });
-  if (Date.now() - statFlushAt > 20000 || statBuf.size > 40) await flushStats();
+  const cls = `${Math.floor(status / 100)}xx`;
+  await sql`INSERT INTO api_stats (day, api, class, n, ms) VALUES (current_date, ${name}, ${cls}, 1, ${ms})
+    ON CONFLICT (day, api, class) DO UPDATE SET n = api_stats.n + 1, ms = api_stats.ms + ${ms}`;
   let kind = null;
-  const act = String(req.query?.a || "");
   if (err || status >= 500) kind = "error";
-  else if (status === 401 && ["me", "ping", "threads"].includes(act)) kind = null; // visiteur non connecté : normal
   else if ([401, 403, 429].includes(status)) kind = "security";
   else if ([404, 405].includes(status)) kind = "contract";
   else if (status === 400) kind = "validation";
@@ -282,7 +331,7 @@ async function record(name, req, status, ms, err) {
   if (!kind) return;
   const detail = err ? String(err.message || err).slice(0, 300) + " | " + String(err.stack || "").split("\n").slice(1, 3).join(" ").slice(0, 200) : "";
   await sql`INSERT INTO app_events (kind, api, action, method, status, ms, ip, detail)
-    VALUES (${kind}, ${name}, ${act.slice(0, 40)}, ${req.method || ""}, ${status}, ${ms}, ${clientIp(req)}, ${detail})`;
+    VALUES (${kind}, ${name}, ${String(req.query?.a || "").slice(0, 40)}, ${req.method || ""}, ${status}, ${ms}, ${clientIp(req)}, ${detail})`;
 }
 
 // Enveloppe une API : capture les exceptions (réponse 500 propre) et alimente la supervision
@@ -294,89 +343,4 @@ export function wrap(name, fn) {
     catch (e) { err = e; if (!res.headersSent) res.status(500).json({ error: "Erreur interne. L’administrateur a été informé." }); }
     try { await record(name, req, res.statusCode, Date.now() - t0, err); } catch { /* la supervision ne doit jamais casser l'API */ }
   };
-}
-
-// ---------- Mot de passe oublié (clients et administrateurs) ----------
-// Jeton aléatoire de 256 bits, stocké uniquement sous forme d'empreinte, valable 30 minutes, à usage unique.
-// Réponse identique que le compte existe ou non (pas d'énumération). Envoi par e-mail via Resend (RESEND_API_KEY + MAIL_FROM).
-export async function sendMail({ to, subject, text }) {
-  const key = process.env.RESEND_API_KEY, from = process.env.MAIL_FROM;
-  if (!key || !from) return false;
-  try {
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: JSON.stringify({ from, to: [to], subject, text }), signal: AbortSignal.timeout(8000) });
-    return r.ok;
-  } catch { return false; }
-}
-let resetsP;
-function ensureResets() {
-  resetsP ??= (async () => {
-    try {
-      await sql`CREATE TABLE IF NOT EXISTS password_resets (id bigserial PRIMARY KEY, kind text NOT NULL, account_id bigint NOT NULL, token_hash text NOT NULL UNIQUE,
-        expires_at timestamptz NOT NULL, used_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`;
-      await sql`CREATE INDEX IF NOT EXISTS password_resets_acc_idx ON password_resets (kind, account_id, created_at DESC)`;
-      return true;
-    } catch { return false; }
-  })().then((ok) => { if (!ok) resetsP = null; return ok; });
-  return resetsP;
-}
-export async function requestReset(req, res, kind) {
-  if (!(await throttle(req, res, "forgot", 5, 3600))) return;
-  const email = str(req.body?.email, 200).toLowerCase();
-  const generic = { ok: true, message: "Si un compte existe pour cette adresse, un e-mail de réinitialisation vient d’être envoyé (valable 30 minutes). Pensez à vérifier vos courriers indésirables." };
-  if (!emailOk(email) || !(await ensureResets())) return send(res, 200, generic);
-  const [acc] = kind === "admin" ? await sql`SELECT id, name FROM users WHERE lower(email) = ${email}`
-    : await sql`SELECT id, name FROM customers WHERE lower(email) = ${email} AND COALESCE(active, true)`;
-  if (acc) {
-    const [recent] = await sql`SELECT 1 AS x FROM password_resets WHERE kind = ${kind} AND account_id = ${acc.id} AND created_at > now() - interval '2 minutes'`;
-    if (!recent) {
-      const token = crypto.randomBytes(32).toString("base64url");
-      await sql`DELETE FROM password_resets WHERE kind = ${kind} AND account_id = ${acc.id} AND (used_at IS NOT NULL OR expires_at < now())`;
-      await sql`INSERT INTO password_resets (kind, account_id, token_hash, expires_at) VALUES (${kind}, ${acc.id}, ${sha(token)}, now() + interval '30 minutes')`;
-      const site = process.env.SITE_URL ? process.env.SITE_URL.replace(/\/$/, "") : `https://${req.headers.host}`;
-      const ok = await sendMail({ to: email, subject: "Réinitialisation de votre mot de passe",
-        text: `Bonjour ${acc.name || ""},\n\nPour choisir un nouveau mot de passe, ouvrez ce lien (valable 30 minutes, utilisable une seule fois) :\n\n${site}/reinitialiser#${token}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.\n\nLocation et vente immobilière` });
-      if (!ok) console.error("[reset] e-mail non envoyé : RESEND_API_KEY / MAIL_FROM absents ou refusés");
-      if (kind === "admin") await audit(acc.id, "password.reset_request", ok ? "e-mail envoyé" : "e-mail NON envoyé");
-    }
-  }
-  return send(res, 200, generic);
-}
-export async function applyReset(req, res) {
-  if (!(await throttle(req, res, "reset", 10, 3600))) return;
-  const token = str(req.body?.token, 100), pw = typeof req.body?.password === "string" ? req.body.password : "";
-  if (!token || !(await ensureResets())) return send(res, 400, { error: "Lien invalide ou expiré. Refaites une demande de réinitialisation." });
-  const [t] = await sql`SELECT id, kind, account_id FROM password_resets WHERE token_hash = ${sha(token)} AND used_at IS NULL AND expires_at > now()`;
-  if (!t) return send(res, 400, { error: "Lien invalide ou expiré. Refaites une demande de réinitialisation." });
-  const min = t.kind === "admin" ? 12 : 8;
-  if (pw.length < min || pw.length > 200) return send(res, 400, { error: `Le mot de passe doit contenir au moins ${min} caractères.`, min });
-  const [used] = await sql`UPDATE password_resets SET used_at = now() WHERE id = ${t.id} AND used_at IS NULL RETURNING id`;
-  if (!used) return send(res, 400, { error: "Lien déjà utilisé. Refaites une demande de réinitialisation." });
-  if (t.kind === "admin") {
-    await sql`UPDATE users SET password_hash = ${hashPassword(pw)}, failed_logins = 0, locked_until = NULL WHERE id = ${t.account_id}`;
-    await sql`DELETE FROM sessions WHERE user_id = ${t.account_id}`;
-    await audit(t.account_id, "password.reset", "mot de passe réinitialisé par e-mail");
-  } else {
-    await sql`UPDATE customers SET password_hash = ${hashPassword(pw)}, failed_logins = 0, locked_until = NULL WHERE id = ${t.account_id}`;
-    await sql`DELETE FROM customer_sessions WHERE customer_id = ${t.account_id}`;
-    await notifyCustomer(t.account_id, "Votre mot de passe vient d’être modifié. Si ce n’est pas vous, contactez-nous immédiatement.");
-  }
-  return send(res, 200, { ok: true, kind: t.kind });
-}
-
-// ---------- Archives : toute suppression est d'abord copiée ici (chiffrée), donc récupérable ----------
-let archP;
-export function ensureArchives() {
-  archP ??= (async () => {
-    try {
-      await sql`CREATE TABLE IF NOT EXISTS archives (id bigserial PRIMARY KEY, kind text NOT NULL, ref_id text NOT NULL, label text NOT NULL DEFAULT '', data text NOT NULL,
-        deleted_by bigint, deleted_at timestamptz NOT NULL DEFAULT now(), restored_at timestamptz)`;
-      await sql`CREATE INDEX IF NOT EXISTS archives_kind_idx ON archives (kind, deleted_at DESC)`;
-      return true;
-    } catch { return false; }
-  })().then((ok) => { if (!ok) archP = null; return ok; });
-  return archP;
-}
-export async function archiveSnapshot(kind, refId, label, payload, by) {
-  await ensureArchives();
-  await sql`INSERT INTO archives (kind, ref_id, label, data, deleted_by) VALUES (${kind}, ${String(refId)}, ${String(label || "").slice(0, 200)}, ${encrypt(JSON.stringify(payload))}, ${by})`;
 }
