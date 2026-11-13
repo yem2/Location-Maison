@@ -1,41 +1,30 @@
-MODULE WHATSAPP (Green API) + NOM « Gestion immobilière »
-Conçu pour la version EN LIGNE actuelle (admin.js avec Archives, Contrats & reçus, api/payments).
-Rien n'écrase vos fichiers existants : 2 fichiers nouveaux + 1 manifeste + 4 petites modifications.
+CORRECTIF : DEPLOIEMENT EN ERREUR (13 fonctions > 12 autorisées) + WHATSAPP
 
-A. AJOUTER (nouveaux fichiers, mêmes chemins dans GitHub)
-   api/whatsapp.js        (12e fonction Vercel sur 12 autorisées : plus de place pour une autre ensuite)
-   js/admin-whatsapp.js
-B. REMPLACER
-   manifest.webmanifest   (nom de l'application : Gestion immobilière)
+CAUSE : api/whatsapp.js ajoutait une 13e fonction. Vercel (plan Hobby) refuse alors TOUT le déploiement,
+le site reste sur l'ancienne version. Un fichier dont le nom commence par "_" n'est pas une fonction.
 
-C. MODIFIER 4 LIGNES (GitHub > fichier > icône crayon > Ctrl+F > Commit)
- 1) html/admin.html  (ou admin.html selon votre dépôt) : ajouter cette ligne juste AVANT la ligne admin.js
-      <script src="/js/admin-whatsapp.js" defer></script>
- 2) js/admin.js : chercher
-      "Location et vente immobilière", h("small", {}, "Administration")
-    remplacer par
-      "Gestion immobilière", h("small", {}, "Administration")
- 3) js/admin.js : chercher
-      ["suggestions", "Suggestions", "suggestions"]] },
-    remplacer par
-      ["suggestions", "Suggestions", "suggestions"], ["whatsapp", "WhatsApp", null, 1]] },
- 4) js/admin.js : chercher
-      : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView()
-    remplacer par
-      : tab === "chat" ? chatView() : tab === "whatsapp" && sup ? window.AdminWhatsApp.view(ctx) : tab === "suggestions" ? suggestionsView()
- => l'onglet « WhatsApp » apparaît dans Messagerie (super administrateur uniquement).
+1) GITHUB : SUPPRIMER  api/whatsapp.js   (ouvrir le fichier > ... > Delete file > Commit)
+2) GITHUB : AJOUTER    api/_whatsapp.js   et   js/admin-whatsapp.js   (fichiers de ce zip)
+3) api/console.js (2 ajouts) :
+   a) tout en haut, avec les autres lignes import, ajouter :
+        import { waHandler } from "./_whatsapp.js";
+   b) dans la fonction handler, juste après la ligne  const a = req.query.a;  ajouter :
+        if (typeof a === "string" && a.startsWith("wa_")) return waHandler(req, res, me);
+      (si "me" porte un autre nom dans votre fichier, utilisez le même nom que le reste du code)
+4) html/admin.html : ajouter AVANT la ligne admin.js
+        <script src="/js/admin-whatsapp.js" defer></script>
+5) js/admin.js (3 remplacements) :
+   - "Location et vente immobilière", h("small", {}, "Administration")
+     devient  "Gestion immobilière", h("small", {}, "Administration")
+   - ["suggestions", "Suggestions", "suggestions"]] },
+     devient  ["suggestions", "Suggestions", "suggestions"], ["whatsapp", "WhatsApp", null, 1]] },
+   - : tab === "chat" ? chatView() : tab === "suggestions" ? suggestionsView()
+     devient  : tab === "chat" ? chatView() : tab === "whatsapp" && sup ? window.AdminWhatsApp.view(ctx) : tab === "suggestions" ? suggestionsView()
+6) Vercel > Settings > Environment Variables (Sensitive) : GREEN_API_ID, GREEN_API_TOKEN, GREEN_API_URL
+   (régénérer d'abord le jeton dans la console Green API) puis Redeploy.
+7) Notifications par WhatsApp (api/_lib.js, facultatif) : dans waSend(to, text), 1re ligne :
+        { const g = await import("./_whatsapp.js"); if (g.greenOn()) return g.sendGreen(to, text); }
 
-D. VERCEL > Settings > Environment Variables (Sensitive) puis Redeploy
-   GREEN_API_ID, GREEN_API_TOKEN, GREEN_API_URL  (valeurs idInstance, apiTokenInstance, apiUrl)
-
-E. FAIRE PARTIR LES NOTIFICATIONS PAR GREEN API (api/_lib.js)
-   Dans waSend(to, text), ajouter en première ligne :
-      { const g = await import("./whatsapp.js"); if (g.greenOn()) return g.sendGreen(to, text); }
-   puis, dans maybeWhatsApp et au 2e endroit où WA_ACCESS_TOKEN est testé, remplacer
-      process.env.WA_ACCESS_TOKEN
-   par
-      (process.env.WA_ACCESS_TOKEN || process.env.GREEN_API_ID)
-   (si les lignes de votre _lib.js sont différentes, envoyez-moi le fichier)
-
-SECURITE : le jeton apiTokenInstance a été visible sur une capture d'écran. Régénérez-le dans la
-console Green API (icône flèche circulaire à côté du jeton) avant de le coller dans Vercel.
+TELEPHONE : si l'ancien tableau de bord s'affiche encore (erreurs "Méthode refusée") : fermez l'application,
+rouvrez-la ; sinon iPhone > Réglages > Safari > Avancé > Données de sites web > supprimer locationmaison,
+puis rouvrir /admin.

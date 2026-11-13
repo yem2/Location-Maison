@@ -30,8 +30,8 @@
           if (st.number) kids.push(h("p", { class: "muted" }, st.number));
           if (st.warning) kids.push(h("p", { class: "wa-err" }, "Avertissement WhatsApp (carton jaune) : réduisez le volume d’envois."));
           kids.push(phone,
-            h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/whatsapp?a=test", "POST", { phone: phone.value }); say("Message de test envoyé."); }) }, "Envoyer le test"),
-            h("button", { class: "ghost", disabled: busy, onclick: () => { if (confirm("Déconnecter ce numéro de WhatsApp ?")) act(async () => { await api("/api/whatsapp?a=logout", "POST", {}); qrImg = null; }); } }, "Déconnecter le numéro"));
+            h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_test", "POST", { phone: phone.value }); say("Message de test envoyé."); }) }, "Envoyer le test"),
+            h("button", { class: "ghost", disabled: busy, onclick: () => { if (confirm("Déconnecter ce numéro de WhatsApp ?")) act(async () => { await api("/api/console?a=wa_logout", "POST", {}); qrImg = null; }); } }, "Déconnecter le numéro"));
         } else if (st.state === "qr") {
           kids.push(qrImg ? h("img", { class: "wa-qr", src: qrImg, alt: "QR code WhatsApp", width: 240, height: 240 }) : h("p", { class: "muted" }, "Génération du QR code…"),
             h("p", { class: "muted" }, "Sur le téléphone : WhatsApp > Paramètres > Appareils connectés > Connecter un appareil, puis scannez ce code."));
@@ -39,7 +39,7 @@
           kids.push(h("p", { class: "wa-err" }, "WhatsApp a bloqué ce numéro. Contactez le support Green API ou utilisez un autre numéro."));
         } else if (st.state !== "unreachable") {
           kids.push(h("p", { class: "muted" }, "Aucun numéro connecté : les notifications WhatsApp ne partent pas."),
-            h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/whatsapp?a=start", "POST", {}); }) }, "Générer le QR code"));
+            h("button", { disabled: busy, onclick: () => act(async () => { await api("/api/console?a=wa_start", "POST", {}); }) }, "Générer le QR code"));
         } else kids.push(h("p", { class: "muted" }, "Green API ne répond pas. Vérifiez GREEN_API_ID, GREEN_API_TOKEN et GREEN_API_URL dans Vercel."));
       }
       if (note) kids.push(h("p", { class: noteErr ? "wa-err" : "wa-okmsg", role: "status" }, note));
@@ -48,8 +48,8 @@
     }
     async function refresh(force) {
       try {
-        st = await api("/api/whatsapp?a=status");
-        if (st.state === "qr" && (force || Date.now() - lastQr > 15000)) { lastQr = Date.now(); const q = await api("/api/whatsapp?a=qr"); qrImg = q.image || qrImg; }
+        st = await api("/api/console?a=wa_status");
+        if (st.state === "qr" && (force || Date.now() - lastQr > 15000)) { lastQr = Date.now(); const q = await api("/api/console?a=wa_qr"); qrImg = q.image || qrImg; }
         if (st.state !== "qr") qrImg = null;
       } catch (e) { st = { configured: true, state: "unreachable" }; }
       draw();
