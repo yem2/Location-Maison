@@ -127,7 +127,7 @@ async function handler(req, res) {
 
   // Sonde publique minimale (pour un service d'uptime externe)
   if (a === "health") {
-    try { const ms = await dbLatency(); return send(res, 200, { ok: true, db: ms }); }
+    try { await dbLatency(); return send(res, 200, { ok: true }); }
     catch { return send(res, 503, { ok: false }); }
   }
 

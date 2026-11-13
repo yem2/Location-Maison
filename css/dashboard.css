@@ -119,7 +119,7 @@ a { color: var(--g); }
   .bar .brand { display: flex; }
   .bar h1 { display: none; }
   .content { padding: 16px 16px 96px; }
-  .tabbar { position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .tabbar { position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); background: var(--card); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom, 0px); }
   .tabbar button { position: relative; display: grid; justify-items: center; gap: 3px; padding: 9px 2px 8px; border: 0; background: transparent; color: var(--mut); font-size: .68rem; font-weight: 600; min-height: 56px; cursor: pointer; }
   .tabbar button.on { color: var(--g); }
   .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
@@ -155,20 +155,30 @@ a { color: var(--g); }
 .complete-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; } .complete-top h2 { margin: 0; }
 .progress { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--g), var(--g2)); }
-/* iOS : pas de zoom automatique au focus */
-@media (max-width:860px){input,select,textarea{font-size:16px}}
 
-/* ---- Visites & documents ---- */
-.row.docs { flex-wrap: wrap; gap: 8px; margin-top: 8px; justify-content: flex-start; }
-.visit { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: start; padding: 12px 0; border-top: 1px solid var(--line); }
-.visit:first-of-type { border-top: 0; }
-.visit-d { display: grid; } .visit-d span { color: var(--mut); font-size: .9rem; }
-.visit-m { grid-column: 1; display: grid; gap: 2px; }
-.visit .pill { grid-column: 2; grid-row: 1; justify-self: end; }
-.visit-a { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; }
-.pill.vs-requested { background: #fff4d6; color: #8a6100; } .pill.vs-confirmed { background: #dff5ea; color: #12805c; }
-.pill.vs-declined, .pill.vs-cancelled { background: #fde7e4; color: #b3271a; } .pill.vs-done { background: #e8ecef; color: #44505a; }
-.slots { display: flex; flex-wrap: wrap; gap: 8px; }
-.slot { padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation; }
-.slot.on { background: var(--g); border-color: var(--g); color: #fff; }
-.slot.off { opacity: .35; cursor: not-allowed; text-decoration: line-through; }
+/* Carte profil : un e-mail long passe à la ligne au lieu de déborder du cadre */
+.side-user { overflow: hidden; }
+.side-user strong { white-space: normal; overflow-wrap: anywhere; }
+.side-user small { display: block; overflow-wrap: anywhere; line-height: 1.35; }
+.side-user .su-mail { font-size: .8rem; }
+
+/* ---- Choix du moyen de paiement ---- */
+.noscroll { overflow: hidden; }
+.modal { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 12px; background: rgba(10, 16, 15, .55); overflow-y: auto; }
+.sheet { width: 100%; max-width: 520px; max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow-y: auto; padding: 20px; background: var(--card); border-radius: 18px; display: grid; gap: 14px; box-shadow: var(--shadow); }
+.sheet-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; } .sheet-head h2 { margin-bottom: 4px; }
+.amount { font-size: 1.5rem; letter-spacing: -.5px; }
+.pms { display: grid; gap: 8px; }
+.pm { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--card); text-align: left; cursor: pointer; }
+.pm.on { border-color: var(--g); background: var(--gsoft); }
+.pm-name { display: grid; font-weight: 700; line-height: 1.25; } .pm-name small { font-weight: 400; }
+.pm-badge { flex: none; display: grid; place-items: center; min-width: 52px; height: 32px; padding: 0 6px; border-radius: 8px; color: #fff; font-size: .7rem; font-weight: 800; letter-spacing: .02em; }
+.pm-orange_money { background: #ff7900; } .pm-mtn_money { background: #ffcc00; color: #111; } .pm-card { background: #1a1f71; } .pm-paypal { background: #003087; } .pm-cash { background: #1f8a5b; } .pm-bank_transfer { background: #5b6b7a; }
+.pm-detail { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); } .pm-detail p { margin: 0; }
+.kv { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; } .kv > span { min-width: 76px; } .kv strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.secure { text-align: center; }
+@media (max-width: 560px) { .modal { align-items: end; padding: 0; } .sheet { max-width: none; border-radius: 18px 18px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); } }
+
+/* iPhone / iPad : une saisie sous 16 px fait zoomer la page au toucher, on l'évite */
+input, select, textarea { font-size: 16px; }
+button, a, .chip, .pm, .nav button, .tabbar button { touch-action: manipulation; }

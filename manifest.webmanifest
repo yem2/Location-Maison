@@ -1,7 +1,7 @@
 {
-  "name": "Gestion Immobilière",
-  "short_name": "Gestion Immo",
-  "description": "Gestion immobilière : biens à louer et à vendre, réservations, visites et paiements.",
+  "name": "Location et vente immobilière",
+  "short_name": "Maison",
+  "description": "Trouvez, réservez et suivez vos biens immobiliers.",
   "lang": "fr",
   "start_url": "/?source=pwa",
   "scope": "/",

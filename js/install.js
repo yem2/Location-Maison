@@ -47,7 +47,7 @@
       } }, "Installer"));
     }
     banner = el("div", { class: "inst", role: "region", "aria-label": "Installer l’application" }, style,
-      el("img", { src: "/assets/icons/icon-192.png", alt: "", width: "44", height: "44" }), el("div", {}, el("strong", {}, "Installer Gestion Immobilière"), text), btns);
+      el("img", { src: "/assets/icons/icon-192.png", alt: "", width: "44", height: "44" }), el("div", {}, el("strong", {}, "Installer Maison"), text), btns);
     document.body.append(banner);
     // Au-dessus de la barre de navigation mobile de l'espace client, s'il y en a une
     const tab = document.querySelector(".tabbar");

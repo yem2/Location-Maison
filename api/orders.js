@@ -1,8 +1,6 @@
-import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str , wrap } from "./_lib.js";
-import { visitsHandler } from "./_visits.js";
+import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str , wrap, archiveSnapshot } from "./_lib.js";
 
 async function handler(req, res) {
-  if (/^visit/.test(String(req.query.a || ""))) return visitsHandler(req, res); // visites : voir api/_visits.js
   // ----- Espace administrateur -----
   if (req.query.admin === "1") {
     const u = await requireUser(req, res);
@@ -44,6 +42,8 @@ async function handler(req, res) {
       const [x] = await sql`SELECT id, property_id, status, payment_status FROM orders WHERE id = ${id}`;
       if (!x) return send(res, 404, { error: "Demande introuvable." });
       if (x.payment_status === "paid") return send(res, 409, { error: "Cette demande a un acompte payé : elle est conservée pour la comptabilité." });
+      const [snap] = await sql`SELECT to_jsonb(o) AS j FROM orders o WHERE id = ${id}`;
+      if (snap) await archiveSnapshot("order", id, "Demande n°" + id + " — " + (snap.j.property_title || ""), snap.j, u.id);
       try { await sql`DELETE FROM orders WHERE id = ${id}`; }
       catch { return send(res, 409, { error: "Suppression impossible : des données liées existent encore." }); }
       if (x.status === "confirmed" && x.property_id) {

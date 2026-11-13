@@ -90,5 +90,9 @@ input[type="range"] { width: 100%; }
 
 /* Curseurs du simulateur : la marge par défaut les faisait déborder de 3 px */
 input[type="range"] { margin: 0; }
-/* iOS : pas de zoom automatique au focus */
-@media (max-width:860px){input,select,textarea{font-size:16px}button,a,select,input,textarea{touch-action:manipulation}}
+
+/* iPhone / iPad / Android : une saisie sous 16 px fait zoomer la page au toucher. On force 16 px sur tous les champs tactiles. */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px !important; }
+}
+button, a, select, label { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }

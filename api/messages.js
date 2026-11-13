@@ -1,4 +1,4 @@
-import { sql, send, throttle, requireUser, sameOrigin, audit, str, emailOk , wrap } from "./_lib.js";
+import { sql, send, throttle, requireUser, sameOrigin, audit, str, emailOk , wrap, archiveSnapshot } from "./_lib.js";
 
 async function handler(req, res) {
   if (req.method === "POST") {
@@ -22,6 +22,8 @@ async function handler(req, res) {
     return send(res, 200, { ok: true });
   }
   if (req.method === "DELETE") {
+    const [snap] = await sql`SELECT to_jsonb(m) AS j FROM messages m WHERE id = ${id}`;
+    if (snap) await archiveSnapshot("message", id, "Message de " + (snap.j.name || snap.j.email || "visiteur"), snap.j, user.id);
     await sql`DELETE FROM messages WHERE id = ${id}`;
     await audit(user.id, "message.delete", String(id));
     return send(res, 200, { ok: true });

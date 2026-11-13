@@ -1,4 +1,4 @@
-import { sql, send, requireUser, hashPassword, audit, str, emailOk , wrap } from "./_lib.js";
+import { sql, send, requireUser, hashPassword, audit, str, emailOk , wrap, archiveSnapshot } from "./_lib.js";
 
 const pwOk = (p) => typeof p === "string" && p.length >= 10 && p.length <= 200;
 
@@ -41,6 +41,8 @@ async function handler(req, res) {
   }
   if (req.method === "DELETE") {
     if (target.id === me.id) return send(res, 400, { error: "Vous ne pouvez pas vous supprimer." });
+    const [snap] = await sql`SELECT to_jsonb(x) AS j FROM users x WHERE id = ${id}`;
+    if (snap) await archiveSnapshot("admin", id, target.email, snap.j, me.id);
     await sql`DELETE FROM users WHERE id = ${id}`;
     await audit(me.id, "admin.delete", target.email);
     return send(res, 200, { ok: true });

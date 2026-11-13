@@ -1,6 +1,6 @@
 // Service worker de Maison : installation de l'application + page hors ligne.
 // Les appels /api, l'espace client (/compte) et l'administration ne sont jamais mis en cache.
-const VERSION = "maison-v2";
+const VERSION = "maison-v3";
 const SHELL = ["/offline.html", "/assets/favicon.svg", "/assets/icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

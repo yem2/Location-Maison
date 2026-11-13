@@ -1,4 +1,4 @@
-import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk , wrap } from "./_lib.js";
+import { sql, send, throttle, hashPassword, verifyPassword, createCustomerSession, destroyCustomerSession, currentCustomer, requireCustomer, sameOrigin, logActivity, notifyAdmins, normalizePhone, str, emailOk , wrap, requestReset, applyReset } from "./_lib.js";
 
 // Colonnes du profil (ville, présentation, photo) : créées automatiquement si la migration n'a pas été lancée.
 let profileCols;
@@ -124,6 +124,8 @@ async function handler(req, res) {
     return send(res, 201, { customer: c });
   }
 
+  if (a === "forgot") return requestReset(req, res, "customer");
+  if (a === "reset") return applyReset(req, res);
   if (a === "login") {
     if (!(await throttle(req, res, "clogin", 10, 600))) return;
     const email = str(b.email, 254).toLowerCase();

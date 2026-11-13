@@ -4,17 +4,16 @@
   const NS = "http://www.w3.org/2000/svg";
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const NAV = [
-    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["visites", "Mes visites", "Visites", "calendar"], ["favoris", "Favoris", "Favoris", "heart"],
+    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["favoris", "Favoris", "Favoris", "heart"],
     ["messages", "Messagerie", "Messages", "chat"], ["notifications", "Notifications", "Alertes", "bell"], ["profil", "Mon profil", "Profil", "user"]
   ];
   const ICON = {
-    calendar: "M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z|M3 10h18|M8 3v4|M16 3v4",
     home: "M3 11l9-8 9 8|M5 10v10h5v-6h4v6h5V10", list: "M8 6h13|M8 12h13|M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01",
     heart: "M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z", chat: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
     bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9|M13.7 21a2 2 0 0 1-3.4 0", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
   };
 
-  let me = null, view = "apercu", orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
+  let me = null, view = "apercu", docs = { receipts: [], contracts: [] }, orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
   let unreadNotes = 0, filter = "all", active = null, lastId = 0, pollT = null, countT = null, toastEl = null;
 
   // ---------- Outils ----------
@@ -79,11 +78,12 @@
 
   // ---------- Données ----------
   async function loadData() {
-    const [o, n, t, c] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config")]);
+    const [o, n, t, c, dc] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config"), api("/api/payments?a=mydocs")]);
     if (o.status === "fulfilled") orders = o.value;
     if (n.status === "fulfilled") { notes = n.value; unreadNotes = notes.filter((x) => !x.is_read).length; }
     if (t.status === "fulfilled") threads = t.value;
     if (c.status === "fulfilled") payCfg = c.value;
+    if (dc.status === "fulfilled") docs = dc.value;
   }
   async function reloadOrders() { try { orders = await api("/api/orders"); } catch (e) { toast(e.message); } }
 
@@ -120,7 +120,7 @@
     app.className = "dash";
     app.replaceChildren(
       h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
-        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name), h("small", { class: "muted" }, me.email))),
+        h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name))), h("small", { class: "muted su-mail" }, me.email),
           h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
       h("div", { class: "main" },
         h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
@@ -141,7 +141,7 @@
     const first = me.name.split(" ")[0];
     const pending = orders.filter((o) => o.status === "pending").length, accepted = orders.filter((o) => o.status === "confirmed").length;
     const due = {};
-    orders.filter((o) => o.status === "confirmed" && Number(o.amount) > 0 && !["paid", "cash_pending"].includes(o.payment_status)).forEach((o) => { due[o.currency] = (due[o.currency] || 0) + Number(o.amount); });
+    orders.filter((o) => o.status === "confirmed" && Number(o.amount) > 0 && !["paid", "cash_pending", "review"].includes(o.payment_status)).forEach((o) => { due[o.currency] = (due[o.currency] || 0) + Number(o.amount); });
     const dueTxt = Object.entries(due).map(([c, a]) => money(a, c)).join(" + ");
     const kpi = (label, val, sub, small) => h("div", { class: "card kpi" }, h("span", {}, label), h("strong", { class: small ? "sm" : "" }, val), h("em", {}, sub));
     return h("div", { class: "content-inner", style: "display:grid;gap:20px;min-width:0" },
@@ -164,31 +164,101 @@
           notes.length ? h("p", {}, h("button", { class: "btn ghost sm", type: "button", onclick: () => go("notifications") }, "Tout voir")) : "")));
   }
 
-  function payBlock(o) {
-    if (o.status !== "confirmed") return "";
-    const parts = [];
-    if (Number(o.amount) > 0) {
-      parts.push(h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
-      if (o.payment_status === "paid") parts.push(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓")));
-      else if (o.payment_status === "refunded") parts.push(h("div", { class: "muted" }, "Acompte remboursé."));
-      else if (o.payment_status === "cash_pending") parts.push(h("div", { class: "muted" }, o.payment_method === "cash" ? "Paiement en espèces à régler à l’agence." : "Paiement déclaré : en attente de confirmation par notre équipe."));
-      else {
-        if (o.payment_status === "pending") parts.push(h("div", { class: "muted" }, "Un paiement est en cours ou n’a pas abouti : vous pouvez réessayer."));
-        parts.push(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => window.MaisonPay.open(o, async () => { await reloadOrders(); render(); }) }, "Payer l’acompte")));
-      }
+  // ---------- Paiement : choix du moyen (espèces, Orange Money, MTN, carte, PayPal, virement) ----------
+  const PMLABEL = { cash: "Espèces", orange_money: "Orange Money", mtn_money: "MTN Mobile Money", card: "Carte Visa / Mastercard", paypal: "PayPal", bank_transfer: "Virement bancaire" };
+  const PMBADGE = { cash: "Cash", orange_money: "OM", mtn_money: "MTN", card: "VISA", paypal: "PayPal", bank_transfer: "Banque" };
+  async function copy(text) {
+    try { await navigator.clipboard.writeText(text); } catch (e) { const t = h("textarea", { value: text }); document.body.append(t); t.select(); try { document.execCommand("copy"); } catch (x) { /* ignore */ } t.remove(); }
+    toast("Copié : " + text);
+  }
+  const copyRow = (label, value) => value ? h("div", { class: "kv" }, h("span", { class: "muted" }, label), h("strong", {}, value), h("button", { class: "btn ghost sm", type: "button", onclick: () => copy(value) }, "Copier")) : "";
+
+  async function openPay(o) {
+    const overlay = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Choisir un moyen de paiement" }), sheet = h("div", { class: "sheet" });
+    overlay.append(sheet);
+    const esc = (e) => { if (e.key === "Escape") close(); };
+    function close() { overlay.remove(); document.body.classList.remove("noscroll"); document.removeEventListener("keydown", esc); }
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    document.addEventListener("keydown", esc); document.body.append(overlay); document.body.classList.add("noscroll");
+    const head = h("div", { class: "sheet-head" }, h("div", {}, h("h2", {}, "Payer l’acompte"), h("strong", { class: "amount" }, money(o.amount, o.currency)), h("br"), h("small", { class: "muted" }, o.property_title || "")),
+      h("button", { class: "btn ghost sm", type: "button", "aria-label": "Fermer", onclick: close }, "✕"));
+    sheet.append(head, h("p", { class: "muted" }, "Chargement des moyens de paiement…"));
+    let data;
+    try { data = await api("/api/pay?a=methods&orderId=" + o.id); }
+    catch (x) { sheet.replaceChildren(head, h("p", { class: "err" }, x.message)); return; }
+    if (!data.options.length) { sheet.replaceChildren(head, h("p", { class: "err" }, "Aucun moyen de paiement n’est disponible pour le moment. Contactez l’agence via la messagerie.")); return; }
+
+    let sel = data.options[0];
+    const list = h("div", { class: "pms", role: "radiogroup", "aria-label": "Moyens de paiement" }), detail = h("div", { class: "pm-detail" }), err = h("p", { class: "err", role: "alert" });
+    const submit = h("button", { class: "btn", type: "button" }), phone = h("input", { type: "tel", inputmode: "tel", autocomplete: "tel", placeholder: "Ex. +237 6 90 00 00 00", maxlength: 25 });
+    const txn = h("input", { type: "text", autocapitalize: "characters", autocomplete: "off", maxlength: 40 }), payer = h("input", { type: "text", autocomplete: "name", maxlength: 80 });
+
+    function drawList() {
+      list.replaceChildren(...data.options.map((m) => h("button", { type: "button", role: "radio", "aria-checked": m.id === sel.id ? "true" : "false", class: "pm" + (m.id === sel.id ? " on" : ""), onclick: () => { sel = m; err.textContent = ""; drawList(); drawDetail(); } },
+        h("span", { class: "pm-badge pm-" + m.id }, PMBADGE[m.id]), h("span", { class: "pm-name" }, m.label,
+          h("small", { class: "muted" }, m.kind === "cash" ? "À l’agence" : m.kind === "online" ? "Paiement en ligne sécurisé" : "Transfert puis vérification")))));
     }
-    // Documents : reçu (une fois payé) et projet de contrat (dès que la demande est acceptée)
-    parts.push(h("div", { class: "row docs" },
-      o.payment_status === "paid" ? h("a", { class: "btn ghost sm", href: "/api/pay?a=receipt&orderId=" + o.id, download: "" }, "Télécharger le reçu (PDF)") : "",
-      h("a", { class: "btn ghost sm", href: "/api/pay?a=contract&orderId=" + o.id, download: "" }, "Projet de contrat (PDF)"),
-      h("a", { class: "btn ghost sm", href: "/compte?visite=" + encodeURIComponent(o.property_id || "") + "#visites" }, "Planifier une visite")));
-    return h("div", { class: "paybox" }, ...parts);
+    function drawDetail() {
+      const amt = money(data.amount, data.currency), kids = [];
+      if (sel.kind === "cash") {
+        kids.push(h("p", {}, "Réglez ", h("strong", {}, amt), " en espèces à l’agence."), sel.address ? h("p", { class: "muted" }, "📍 " + sel.address) : "", sel.instructions ? h("p", { class: "muted" }, sel.instructions) : "");
+        submit.textContent = "Confirmer le paiement en espèces";
+      } else if (sel.kind === "online") {
+        kids.push(h("p", {}, "Vous serez redirigé vers la page sécurisée de ", h("strong", {}, sel.provider), ". Vos données bancaires ne transitent jamais par notre site."));
+        if (sel.converted) kids.push(h("p", { class: "muted" }, "Montant débité par PayPal : " + sel.converted.value + " " + sel.converted.currency_code + " (conversion à parité fixe du franc CFA)."));
+        submit.textContent = "Payer " + amt + " avec " + sel.label;
+      } else if (sel.id === "bank_transfer") {
+        kids.push(h("p", {}, "Faites un virement de ", h("strong", {}, amt), " vers :"), copyRow("Banque", sel.bank), copyRow("Titulaire", sel.holder), copyRow("IBAN", sel.iban), copyRow("N° de compte", sel.account), copyRow("BIC / SWIFT", sel.swift),
+          sel.instructions ? h("p", { class: "muted" }, sel.instructions) : "", h("label", { class: "field" }, h("span", {}, "Nom du titulaire du compte débité"), payer), h("label", { class: "field" }, h("span", {}, "Référence de votre virement"), txn));
+        submit.textContent = "J’ai payé — envoyer pour vérification";
+      } else {
+        kids.push(h("p", {}, "1. Envoyez ", h("strong", {}, amt), " via ", sel.label, " au numéro :"), copyRow("Numéro", sel.number), copyRow("Titulaire", sel.holder),
+          h("p", {}, "2. Notez l’identifiant de la transaction reçu par SMS, puis renseignez-le ci-dessous."), sel.instructions ? h("p", { class: "muted" }, sel.instructions) : "",
+          h("label", { class: "field" }, h("span", {}, "Numéro avec lequel vous avez payé"), phone), h("label", { class: "field" }, h("span", {}, "Identifiant de la transaction (SMS)"), txn));
+        submit.textContent = "J’ai payé — envoyer pour vérification";
+      }
+      if (sel.kind === "manual") kids.push(h("small", { class: "muted" }, "L’agence vérifie votre paiement avant de le valider (généralement sous quelques heures). Ne payez qu’au numéro affiché ici."));
+      detail.replaceChildren(...kids);
+    }
+    submit.addEventListener("click", async () => {
+      err.textContent = ""; submit.disabled = true;
+      try {
+        const r = await api("/api/pay?a=start", "POST", { orderId: o.id, method: sel.id, payerPhone: phone.value, payerName: payer.value, txnRef: txn.value });
+        if (r.link) { submit.textContent = "Redirection sécurisée…"; window.location.href = r.link; return; }
+        close(); toast(r.done === "cash" ? "Paiement en espèces enregistré : réglez-le à l’agence." : "Paiement envoyé : l’agence le vérifie et vous prévient.");
+        await reloadOrders(); render();
+      } catch (x) { err.textContent = x.message; submit.disabled = false; }
+    });
+    sheet.replaceChildren(head, list, detail, err, submit, h("small", { class: "muted secure" }, "🔒 Paiements sécurisés : montant fixé par le serveur, vérification auprès du fournisseur."));
+    drawList(); drawDetail();
+  }
+
+  const PSTATUS = { pending: "Un paiement est en cours ou n’a pas abouti.", failed: "Le dernier paiement n’a pas abouti : vous pouvez réessayer.", cash_pending: "Paiement en espèces à régler à l’agence.", review: "Paiement en cours de vérification par l’agence." };
+  function payBlock(o) {
+    if (o.status !== "confirmed" || !(Number(o.amount) > 0)) return "";
+    const box = h("div", { class: "paybox" }, h("div", {}, "Acompte de réservation : ", h("strong", {}, money(o.amount, o.currency))));
+    if (o.payment_status === "paid") box.append(h("div", {}, h("span", { class: "pill paid" }, "Payé ✓"), o.payment_method && PMLABEL[o.payment_method] ? h("small", { class: "muted" }, " · " + PMLABEL[o.payment_method]) : ""));
+    if (o.payment_status === "paid") { const rc = docs.receipts.find((r) => r.order_id === o.id); if (rc) box.append(h("a", { class: "btn ghost sm", href: "/api/payments?a=receipt&id=" + rc.id, download: "" }, "📄 Télécharger le reçu (PDF)")); }
+    else if (o.payment_status === "review") box.append(h("div", { class: "muted" }, "⏳ " + PSTATUS.review));
+    else {
+      if (PSTATUS[o.payment_status]) box.append(h("div", { class: "muted" }, PSTATUS[o.payment_status]));
+      box.append(h("div", { class: "row" }, h("button", { class: "btn", type: "button", onclick: () => openPay(o) }, o.payment_status === "cash_pending" ? "Changer de moyen de paiement" : "Payer l’acompte")));
+    }
+    return box;
+  }
+  const recNum = (r) => "REC-" + new Date(r.confirmed_at).getFullYear() + "-" + String(r.id).padStart(6, "0");
+  function documents() {
+    if (!docs.receipts.length && !docs.contracts.length) return "";
+    const row = (title, sub, url) => h("div", { class: "item" }, h("div", {}, h("strong", {}, title), h("small", { class: "muted" }, sub)), h("a", { class: "btn ghost sm", href: url, download: "" }, "Télécharger (PDF)"));
+    return h("div", { class: "card" }, h("h2", {}, "Mes documents"), h("div", { class: "list" },
+      docs.contracts.map((k) => row(k.label + " — " + k.number, (k.property_title || "") + " · " + fmtDate(k.created_at), "/api/payments?a=contract&id=" + k.id)),
+      docs.receipts.map((r) => row("Reçu de paiement — " + recNum(r), money(r.amount, r.currency) + " · " + (r.property_title || "") + " · " + fmtDate(r.confirmed_at), "/api/payments?a=receipt&id=" + r.id))));
   }
   function requests() {
     const groups = { all: () => true, pending: (o) => o.status === "pending", confirmed: (o) => o.status === "confirmed", closed: (o) => ["rejected", "cancelled"].includes(o.status) };
     const labels = { all: "Toutes", pending: "En attente", confirmed: "Acceptées", closed: "Refusées / annulées" };
     const rows = orders.filter(groups[filter]);
-    return h("div", { style: "display:grid;gap:16px;min-width:0" },
+    return h("div", { style: "display:grid;gap:16px;min-width:0" }, documents(),
       h("div", { class: "chips" }, Object.keys(labels).map((k) => h("button", { type: "button", class: "chip" + (k === filter ? " on" : ""), onclick: () => { filter = k; render(); } }, labels[k] + " (" + orders.filter(groups[k]).length + ")"))),
       rows.length ? rows.map((o) => h("div", { class: "card order" },
         h("div", { class: "order-head" }, h("div", {}, h("strong", {}, o.property_title || "Bien supprimé"), h("br"), h("small", { class: "muted" }, "Demande du " + fmtDate(o.created_at))), h("span", { class: "pill " + o.status }, ST[o.status] || o.status)),
@@ -337,73 +407,7 @@
       h("div", { class: "card" }, h("h2", {}, "Session"), h("p", { class: "muted" }, "Vous êtes connecté en tant que " + me.email + "."), h("button", { class: "btn danger", type: "button", onclick: logout }, "Se déconnecter")));
   }
 
-  // ---------- Visites ----------
-  const VST = { requested: "Demandée", confirmed: "Confirmée", declined: "Refusée", cancelled: "Annulée", done: "Effectuée" };
-  const fmtDay = (d) => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  const addDays = (d, n) => new Date(new Date(d + "T12:00:00Z").getTime() + n * 864e5).toISOString().slice(0, 10);
-  function visits() {
-    const params = new URLSearchParams(location.search);
-    let list = null;
-    const listBox = h("div", { class: "card" }, h("h2", {}, "Mes visites"), h("p", { class: "muted" }, "Chargement…"));
-    const loadList = () => api("/api/orders?a=visits").then((r) => { list = r; date.min = r.today; date.max = addDays(r.today, 60); drawList(); })
-      .catch((x) => listBox.replaceChildren(h("h2", {}, "Mes visites"), h("p", { class: "err" }, x.message)));
-    async function cancel(v) {
-      if (!confirm("Annuler cette visite ?")) return;
-      try { await api("/api/orders?a=visit_cancel", "POST", { id: v.id }); toast("Visite annulée."); loadList(); loadSlots(); } catch (x) { toast(x.message); }
-    }
-    function drawList() {
-      const today = list.today, active = (v) => ["requested", "confirmed"].includes(v.status) && v.date >= today;
-      const up = list.visits.filter(active).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-      const past = list.visits.filter((v) => !active(v));
-      const item = (v) => h("div", { class: "visit" },
-        h("div", { class: "visit-d" }, h("strong", {}, fmtDay(v.date)), h("span", {}, "à " + v.time)),
-        h("div", { class: "visit-m" }, h("strong", {}, v.property_title), v.note ? h("small", { class: "muted" }, "Votre message : " + v.note) : "", v.admin_note ? h("small", { class: "muted" }, "Équipe : " + v.admin_note) : ""),
-        h("span", { class: "pill vs-" + v.status }, VST[v.status] || v.status),
-        h("div", { class: "visit-a" },
-          v.status === "confirmed" ? h("a", { class: "btn ghost sm", href: "/api/orders?a=visit_ics&id=" + v.id, download: "" }, "Ajouter au calendrier") : "",
-          active(v) ? h("button", { class: "btn ghost sm", type: "button", onclick: () => cancel(v) }, "Annuler") : ""));
-      listBox.replaceChildren(h("h2", {}, "Mes visites"), ...(up.length ? up.map(item) : [empty("Aucune visite à venir.")]), ...(past.length ? [h("h3", { class: "muted", style: "margin:16px 0 6px" }, "Historique"), ...past.slice(0, 10).map(item)] : []));
-    }
-
-    const prop = h("select", { "aria-label": "Bien à visiter" }, h("option", { value: "" }, "Choisir un bien…"));
-    const date = h("input", { type: "date", "aria-label": "Date de la visite" });
-    const slotsBox = h("div", { class: "slots", role: "group", "aria-label": "Horaires disponibles" });
-    const note = h("textarea", { rows: 2, maxlength: 300, placeholder: "Message pour l’équipe (facultatif)" });
-    const err = h("p", { class: "err", role: "alert" }), btn = h("button", { class: "btn", type: "submit", disabled: true }, "Demander cette visite");
-    let time = "";
-    function loadSlots() {
-      time = ""; btn.disabled = true;
-      if (!prop.value || !date.value) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Choisissez un bien et une date pour voir les horaires.")); return; }
-      slotsBox.replaceChildren(h("small", { class: "muted" }, "Chargement…"));
-      api("/api/orders?a=visit_slots&propertyId=" + encodeURIComponent(prop.value) + "&date=" + date.value).then((r) => {
-        if (!r.dayOk) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Pas de visites ce jour-là : choisissez un autre jour.")); return; }
-        if (!r.slots.some((s) => s.free)) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Plus de créneau libre ce jour-là : essayez une autre date.")); return; }
-        slotsBox.replaceChildren(...r.slots.map((s) => h("button", { type: "button", class: "slot" + (s.free ? "" : " off"), disabled: !s.free, onclick: (e) => {
-          time = s.time; [...slotsBox.children].forEach((c) => c.classList.toggle("on", c === e.currentTarget)); btn.disabled = false;
-        } }, s.time)));
-      }).catch((x) => slotsBox.replaceChildren(h("small", { class: "err" }, x.message)));
-    }
-    prop.addEventListener("change", loadSlots); date.addEventListener("change", loadSlots);
-    const fillProps = (arr) => {
-      arr.filter((p) => p.published !== false).forEach((p) => prop.append(h("option", { value: p.id }, p.title + (p.location ? " — " + p.location : ""))));
-      const want = params.get("visite"); if (want && [...prop.options].some((o) => o.value === want)) prop.value = want;
-      loadSlots();
-    };
-    if (props) fillProps(props); else api("/api/properties").then((r) => { props = Array.isArray(r) ? r : []; fillProps(props); }).catch(() => { err.textContent = "Impossible de charger la liste des biens."; });
-    slotsBox.append(h("small", { class: "muted" }, "Choisissez un bien et une date pour voir les horaires."));
-
-    const form = h("form", { class: "form", onsubmit: async (e) => {
-      e.preventDefault(); err.textContent = ""; btn.disabled = true;
-      try {
-        await api("/api/orders?a=visit_book", "POST", { propertyId: prop.value, date: date.value, time, note: note.value });
-        note.value = ""; toast("Demande envoyée. Vous serez notifié dès la confirmation."); await loadList(); loadSlots();
-      } catch (x) { err.textContent = x.message; btn.disabled = !time; loadSlots(); }
-    } }, field("Bien à visiter", prop), field("Date", date), h("div", { class: "field" }, h("span", {}, "Horaire"), slotsBox), field("Message", note), err, btn);
-    loadList();
-    return h("div", { style: "display:grid;gap:20px;min-width:0" }, h("div", { class: "card" }, h("h2", {}, "Planifier une visite"), h("p", { class: "muted" }, "Choisissez un créneau libre : notre équipe confirme, puis vous recevez un rappel la veille et le jour même."), form), listBox);
-  }
-
-  const VIEWS = { apercu: overview, demandes: requests, visites: visits, favoris: favorites, messages: messaging, notifications, profil: profile };
+  const VIEWS = { apercu: overview, demandes: requests, favoris: favorites, messages: messaging, notifications, profil: profile };
 
   // ---------- Connexion ----------
   function showLogin(note) {
@@ -415,41 +419,9 @@
         e.preventDefault(); err.textContent = ""; btn.disabled = true;
         try { const r = await api("/api/customer?a=login", "POST", { email: email.value, password: pw.value }); me = r.customer; await start(); }
         catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("E-mail", email), field("Mot de passe", pw), err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "#forgot", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte#forgot"); showForgot(); } }, "Mot de passe oublié ?")))),
+      } }, field("E-mail", email), field("Mot de passe", pw), err, btn)),
+      h("p", { class: "muted" }, h("a", { href: "/reinitialiser?type=client" }, "Mot de passe oublié ?")),
       h("p", { class: "muted" }, "Pas encore de compte ? ", h("a", { href: "/" }, "Retour au site"), " puis « Se connecter » → « Créer un compte ».")));
-  }
-
-  // ---------- Mot de passe oublié ----------
-  function showForgot() {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const email = h("input", { type: "email", autocomplete: "email", required: true }), err = h("p", { class: "err", role: "alert" }, ""), done = h("p", { class: "muted", role: "status" }, "");
-    const btn = h("button", { class: "btn", type: "submit" }, "Envoyer le lien");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Mot de passe oublié"),
-      h("p", { class: "muted" }, "Saisissez l’e-mail de votre compte : nous vous enverrons un lien pour choisir un nouveau mot de passe."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = ""; done.textContent = ""; btn.disabled = true;
-        try {
-          const r = await api("/api/customer?a=forgot", "POST", { email: email.value });
-          if (r.mail === false) err.textContent = "L’envoi d’e-mails n’est pas encore disponible. Contactez-nous : un administrateur peut réinitialiser votre mot de passe.";
-          else done.textContent = "Si un compte correspond à cette adresse, un lien de réinitialisation vient d’être envoyé (valable 30 minutes). Pensez à vérifier vos courriers indésirables.";
-        } catch (x) { err.textContent = x.message; }
-        btn.disabled = false;
-      } }, field("E-mail", email), done, err, btn,
-        h("p", { class: "muted", style: "margin:10px 0 0;text-align:center" }, h("a", { href: "/compte", onclick: (e) => { e.preventDefault(); history.replaceState(null, "", "/compte"); showLogin(); } }, "Retour à la connexion"))))));
-  }
-  function showReset(token) {
-    stopPoll(); clearInterval(countT); app.className = "boot";
-    const p1 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 }), p2 = h("input", { type: "password", autocomplete: "new-password", required: true, minlength: 8 });
-    const err = h("p", { class: "err", role: "alert" }, ""), btn = h("button", { class: "btn", type: "submit" }, "Enregistrer le mot de passe");
-    app.replaceChildren(h("div", { class: "loginbox" }, brand(), h("div", { class: "card" }, h("h2", {}, "Nouveau mot de passe"), h("p", { class: "muted" }, "Choisissez un mot de passe d’au moins 8 caractères."),
-      h("form", { class: "form", style: "margin-top:14px", onsubmit: async (e) => {
-        e.preventDefault(); err.textContent = "";
-        if (p1.value !== p2.value) { err.textContent = "Les deux mots de passe ne correspondent pas."; return; }
-        btn.disabled = true;
-        try { await api("/api/customer?a=reset", "POST", { token, password: p1.value }); me = null; history.replaceState(null, "", "/compte"); showLogin("Mot de passe modifié. Connectez-vous avec le nouveau."); }
-        catch (x) { err.textContent = x.message; btn.disabled = false; }
-      } }, field("Nouveau mot de passe", p1), field("Confirmer", p2), err, btn))));
   }
 
   async function start() {
@@ -473,8 +445,5 @@
   }
 
   window.addEventListener("hashchange", () => { const id = location.hash.slice(1); if (me && VIEWS[id] && id !== view) { view = id; render(); } });
-  const resetTk = (location.hash.match(/^#reset=([a-f0-9]{64})$/) || [])[1];
-  if (resetTk) showReset(resetTk);
-  else if (location.hash === "#forgot") showForgot();
-  else api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
+  api("/api/customer?a=me&full=1").then((r) => { me = r.customer; return start(); }).catch(() => showLogin());
 })();

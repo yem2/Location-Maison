@@ -1,5 +1,4 @@
 {
-  "regions": ["iad1"],
   "rewrites": [
     {
       "source": "/acheter",
@@ -28,6 +27,10 @@
     {
       "source": "/compte",
       "destination": "/html/compte.html"
+    },
+    {
+      "source": "/reinitialiser",
+      "destination": "/html/reinitialiser.html"
     }
   ],
   "headers": [
@@ -71,26 +74,23 @@
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache" },
-        { "key": "Service-Worker-Allowed", "value": "/" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
       ]
     },
     {
       "source": "/manifest.webmanifest",
       "headers": [
-        { "key": "Content-Type", "value": "application/manifest+json" }
-      ]
-    },
-    {
-      "source": "/assets/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
-      ]
-    },
-    {
-      "source": "/(css|js)/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
+        }
       ]
     },
     {
@@ -113,7 +113,6 @@
     {
       "path": "/api/monitor?a=cron",
       "schedule": "0 5 * * *"
-    },
-    { "path": "/api/orders?a=visit_reminders", "schedule": "0 6 * * *" }
+    }
   ]
 }

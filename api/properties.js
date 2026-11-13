@@ -34,25 +34,20 @@ async function handler(req, res) {
   if (req.method === "GET") {
     const all = req.query.all === "1" && (await requireUser(req, res));
     if (req.query.all === "1" && !all) return;
-    if (all) await ensureSchema();
+    if (all) { await ensureSchema(); res.setHeader("Cache-Control", "private, no-store"); }
     const rows = all
       ? await sql`SELECT * FROM properties ORDER BY position, created_at`
       : await sql`SELECT * FROM properties WHERE published ORDER BY position, created_at`;
-    res.setHeader("Cache-Control", all ? "private, no-store" : "public, s-maxage=30, stale-while-revalidate=120");
+    if (!all) res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
     return send(res, 200, rows.map(toFront));
   }
   const user = await requireUser(req, res);
   if (!user) return;
 
   if (req.method === "DELETE") {
-    if (user.role !== "super_admin") return send(res, 403, { error: "La suppression définitive est réservée au super administrateur." });
-    if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
     const id = str(req.query.id, 80);
-    const [x] = await sql`SELECT archived FROM properties WHERE id = ${id}`;
-    if (!x) return send(res, 404, { error: "Annonce introuvable." });
-    if (!x.archived) return send(res, 409, { error: "Mettez d’abord l’annonce dans les archives, puis supprimez-la définitivement." });
-    await sql`DELETE FROM properties WHERE id = ${id}`;
-    await audit(user.id, "property.delete", id);
+    await sql`UPDATE properties SET archived = true, archived_at = now(), published = false, updated_at = now() WHERE id = ${id}`;
+    await audit(user.id, "property.archive", id);
     return send(res, 200, { ok: true });
   }
   // Archiver / restaurer : l'annonce disparaît du site public mais reste en base (réversible)

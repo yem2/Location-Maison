@@ -47,3 +47,11 @@ Les pages de vente et de location proposent la recherche multicritère, le tri p
 Dans les deux cas, ne déplacez pas `index.html` : les hébergeurs le servent comme page d’accueil. Bootstrap est chargé depuis jsDelivr, donc ses ressources nécessitent une connexion Internet.
 
 Le fichier `netlify.toml` configure déjà Netlify pour publier la racine du dépôt. Après avoir lié le dépôt GitHub à Netlify, chaque `push` sur la branche de production déclenche automatiquement une nouvelle publication. Sur GitHub Pages, activez Pages depuis la branche choisie dans les paramètres du dépôt ; les modifications envoyées sur cette branche seront publiées automatiquement.
+
+## Moyens de paiement, documents et sécurité (v2)
+- **Paiement** : espèces, Orange Money, MTN Mobile Money, carte Visa/Mastercard (Flutterwave), PayPal, virement. Les numéros et comptes se saisissent dans **Demandes & paiements › Moyens de paiement** (super administrateur, avec mot de passe + 2FA si activée).
+- **Variables Vercel** : `FLW_SECRET_KEY`, `FLW_WEBHOOK_HASH`, `PAYPAL_CLIENT_ID`, `PAYPAL_SECRET`, `PAYPAL_WEBHOOK_ID`, (`PAYPAL_ENV=sandbox` pour tester), `SITE_URL` (ex. https://votre-site.com), `APP_SECRET`, `RESEND_API_KEY` + `MAIL_FROM` (e-mails « mot de passe oublié »), `CRON_SECRET`.
+- **Webhooks** : Flutterwave → `https://VOTRE-SITE/api/pay?a=webhook` ; PayPal → `https://VOTRE-SITE/api/pay?a=pp_webhook`.
+- **Documents PDF** : reçus de paiement et contrats (location, vente, réservation) — onglet **Contrats & reçus** ; le client les télécharge dans « Mes demandes ».
+- **Archives** : toute suppression est récupérable (onglet **Archives**, super administrateur).
+- Détail des routes : voir `API.md`. Tables : `migration-paiements-documents.sql` (facultatif, créées automatiquement sinon).

@@ -1,5 +1,4 @@
-import { sql, send, requireUser, audit, hashPassword, str, emailOk, ensureSchema, wrap } from "./_lib.js";
-import { ensureVisitSchema } from "./_visits.js";
+import { sql, send, requireUser, audit, hashPassword, str, emailOk, wrap, archiveSnapshot, ensureArchives, decrypt, notifyAdmins } from "./_lib.js";
 
 async function handler(req, res) {
   const me = await requireUser(req, res);
@@ -7,14 +6,59 @@ async function handler(req, res) {
   const a = req.query.a;
   const isSuper = me.role === "super_admin";
 
+  // ----- Archives (super administrateur) : lister, restaurer, supprimer définitivement -----
+  if (a === "archives" || a === "restore" || a === "purge") {
+    if (me.role !== "super_admin") return send(res, 403, { error: "Réservé au super administrateur" });
+    await ensureArchives();
+    if (a === "archives" && req.method === "GET") {
+      const items = await sql`SELECT a.id, a.kind, a.ref_id, a.label, a.deleted_at, u.name AS by_name FROM archives a LEFT JOIN users u ON u.id = a.deleted_by WHERE a.restored_at IS NULL ORDER BY a.deleted_at DESC LIMIT 300`;
+      const props = await sql`SELECT id, title, archived_at FROM properties WHERE archived = true ORDER BY archived_at DESC NULLS LAST LIMIT 300`;
+      return send(res, 200, { items, properties: props });
+    }
+    if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
+    const kind = str(req.body?.kind, 20), refId = str(req.body?.id, 80);
+    if (kind === "property") {
+      if (a === "restore") { await sql`UPDATE properties SET archived = false, archived_at = NULL, published = true, updated_at = now() WHERE id = ${refId}`; await audit(me.id, "property.restore", refId); return send(res, 200, { ok: true }); }
+      const [pp] = await sql`DELETE FROM properties WHERE id = ${refId} AND archived = true RETURNING title`;
+      if (!pp) return send(res, 404, { error: "Annonce archivée introuvable." });
+      await audit(me.id, "property.purge", refId); return send(res, 200, { ok: true });
+    }
+    const [row] = await sql`SELECT * FROM archives WHERE id = ${Number(refId) || 0} AND restored_at IS NULL`;
+    if (!row) return send(res, 404, { error: "Élément introuvable ou déjà restauré." });
+    if (a === "purge") { await sql`DELETE FROM archives WHERE id = ${row.id}`; await audit(me.id, "archive.purge", row.kind + " " + row.label); return send(res, 200, { ok: true }); }
+    let d; try { d = JSON.parse(decrypt(row.data)); } catch { return send(res, 500, { error: "Archive illisible." }); }
+    try {
+      if (row.kind === "message") await sql`INSERT INTO messages SELECT * FROM jsonb_populate_record(NULL::messages, ${JSON.stringify(d)}::jsonb) ON CONFLICT DO NOTHING`;
+      else if (row.kind === "admin") await sql`INSERT INTO users SELECT * FROM jsonb_populate_record(NULL::users, ${JSON.stringify(d)}::jsonb)`;
+      else if (row.kind === "order") {
+        await sql`INSERT INTO orders SELECT * FROM jsonb_populate_record(NULL::orders, ${JSON.stringify(d)}::jsonb) ON CONFLICT DO NOTHING`;
+        if (d.status === "confirmed" && d.property_id) {
+          const [k] = await sql`SELECT count(*)::int AS n FROM orders WHERE property_id = ${d.property_id} AND status = 'confirmed' AND id <> ${d.id}`;
+          if (k.n) await sql`UPDATE orders SET status = 'cancelled' WHERE id = ${d.id}`; else await sql`UPDATE properties SET availability = 'reserved', updated_at = now() WHERE id = ${d.property_id} AND availability = 'available'`;
+        }
+      } else if (row.kind === "customer") {
+        await sql`INSERT INTO customers SELECT * FROM jsonb_populate_record(NULL::customers, ${JSON.stringify(d.customer)}::jsonb)`;
+        await sql`INSERT INTO orders SELECT * FROM jsonb_populate_recordset(NULL::orders, ${JSON.stringify(d.orders || [])}::jsonb) ON CONFLICT DO NOTHING`;
+        await sql`INSERT INTO suggestions SELECT * FROM jsonb_populate_recordset(NULL::suggestions, ${JSON.stringify(d.suggestions || [])}::jsonb) ON CONFLICT DO NOTHING`;
+      } else return send(res, 400, { error: "Type d’archive inconnu." });
+    } catch (e) {
+      return send(res, 409, { error: /duplicate|unique/i.test(String(e?.message)) ? "Restauration impossible : un élément identique (même e-mail ou identifiant) existe déjà." : "Restauration impossible : " + String(e?.message || "erreur").slice(0, 120) });
+    }
+    await sql`UPDATE archives SET restored_at = now() WHERE id = ${row.id}`;
+    await audit(me.id, "archive.restore", row.kind + " " + row.label);
+    return send(res, 200, { ok: true });
+  }
+
   if (a === "counts") {
-    const [n] = await sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`;
-    const [o] = await sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`;
-    const [ch] = await sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`;
-    const [sg] = await sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`;
-    let pendingVisits = 0;
-    if (await ensureVisitSchema()) { try { const [v] = await sql`SELECT count(*)::int AS n FROM visits WHERE status = 'requested'`; pendingVisits = v.n; } catch (e) { /* ignoré */ } }
-    return send(res, 200, { notifications: n.n, pendingOrders: o.n, chat: ch.n, suggestions: sg.n, pendingVisits });
+    const safe = (p) => p.then((r) => r[0].n).catch(() => 0);
+    const [notifications, pendingOrders, chat, suggestions, paymentsReview] = await Promise.all([
+      safe(sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`),
+      safe(sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`),
+      safe(sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`),
+      safe(sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`),
+      safe(sql`SELECT count(*)::int AS n FROM payments WHERE status = 'review' OR (status = 'pending' AND method = 'cash')`)
+    ]);
+    return send(res, 200, { notifications, pendingOrders, chat, suggestions, paymentsReview });
   }
   if (a === "stats") {
     const [p] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`;
@@ -55,14 +99,6 @@ async function handler(req, res) {
         if (!b.active) await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, b.active ? "customer.enable" : "customer.disable", String(id));
       }
-      if (typeof b.archived === "boolean") {
-        if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
-        if (b.archived) {
-          await sql`UPDATE customers SET archived_at = now(), active = false WHERE id = ${id}`;
-          await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
-        } else await sql`UPDATE customers SET archived_at = NULL, active = true WHERE id = ${id}`;
-        await audit(me.id, b.archived ? "customer.archive" : "customer.restore", c.email);
-      }
       if (b.disconnect === true) {
         await sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`;
         await audit(me.id, "customer.disconnect", c.email);
@@ -85,12 +121,14 @@ async function handler(req, res) {
     }
     if (req.method === "DELETE") {
       const id = Number(req.query.id) || 0;
-      await ensureSchema();
-      const [c] = await sql`SELECT id, email, archived_at FROM customers WHERE id = ${id}`;
+      const [c] = await sql`SELECT id, email FROM customers WHERE id = ${id}`;
       if (!c) return send(res, 404, { error: "Client introuvable." });
-      if (!c.archived_at) return send(res, 409, { error: "Mettez d’abord le compte dans les archives, puis supprimez-le définitivement." });
       const [p] = await sql`SELECT count(*)::int AS n FROM orders WHERE customer_id = ${id} AND payment_status = 'paid'`;
       if (p.n) return send(res, 409, { error: "Ce client a des acomptes payés : désactivez son compte plutôt que de le supprimer (la comptabilité est conservée)." });
+      const [cu] = await sql`SELECT to_jsonb(c) AS j FROM customers c WHERE id = ${id}`;
+      const [ords] = await sql`SELECT COALESCE(jsonb_agg(to_jsonb(o)), '[]'::jsonb) AS j FROM orders o WHERE customer_id = ${id}`;
+      const [sugs] = await sql`SELECT COALESCE(jsonb_agg(to_jsonb(s)), '[]'::jsonb) AS j FROM suggestions s WHERE customer_id = ${id}`;
+      if (cu) await archiveSnapshot("customer", id, c.email, { customer: cu.j, orders: ords.j, suggestions: sugs.j }, me.id);
       try {
         await sql.transaction([
           sql`DELETE FROM customer_sessions WHERE customer_id = ${id}`,
@@ -105,13 +143,11 @@ async function handler(req, res) {
       await audit(me.id, "customer.delete", c.email);
       return send(res, 200, { ok: true });
     }
-    await ensureSchema();
-    const arch = req.query.archived === "1";
-    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen, c.archived_at,
+    return send(res, 200, await sql`SELECT c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login, c.last_seen,
       EXISTS (SELECT 1 FROM customer_sessions s WHERE s.customer_id = c.id AND s.expires_at > now()) AND c.last_seen > now() - interval '5 minutes' AS online,
       (SELECT count(*)::int FROM orders o WHERE o.customer_id = c.id) AS orders,
       (SELECT count(*)::int FROM activity x WHERE x.customer_id = c.id) AS actions
-      FROM customers c WHERE (c.archived_at IS NOT NULL) = ${arch} ORDER BY c.created_at DESC LIMIT 500`);
+      FROM customers c ORDER BY c.created_at DESC LIMIT 500`);
   }
   if (a === "activity") {
     const cid = Number(req.query.customer) || 0;
