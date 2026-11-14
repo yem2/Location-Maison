@@ -334,6 +334,35 @@
   }
   const meter = (label, n, total) => h("div", {}, h("div", { class: "row" }, h("span", {}, label), h("strong", {}, String(n))), h("div", { class: "bar" }, h("i", { style: "width:" + (total ? (n / total) * 100 : 0) + "%" })));
 
+  // Module Paiements du tableau de bord (administrateur et super administrateur)
+  const PAYM = { cash: "Espèces", orange_money: "Orange Money", mtn_money: "MTN Mobile Money", card: "Carte", paypal: "PayPal", bank_transfer: "Virement" };
+  const PAYS = { pending: "En attente", review: "À vérifier", paid: "Payé ✓", failed: "Échoué", cancelled: "Annulé" };
+  function paymentsCard() {
+    const box = h("div", { class: "card" }, h("h2", {}, "Paiements"), h("p", { class: "muted" }, "Chargement…"));
+    const money = (a, c) => new Intl.NumberFormat("fr-FR").format(Number(a) || 0) + " " + (c || "");
+    const go = (t) => () => { tab = t; window._cust = null; render(); };
+    api("/api/payments?a=list").then((d) => {
+      const sup = me.role === "super_admin";
+      const todo = d.rows.filter((p) => p.status === "review" || (p.status === "pending" && p.method === "cash"));
+      const done = d.rows.filter((p) => !todo.includes(p)).slice(0, 5);
+      const line = (p) => h("div", { class: "row payline" },
+        h("span", {}, h("strong", {}, money(p.amount, p.currency)), " · " + (PAYM[p.method] || p.method), h("br"), h("span", { class: "muted" }, (p.customer_name || "?") + (p.property_title ? " — " + p.property_title : ""))),
+        h("span", { class: "pill st-" + p.status }, PAYS[p.status] || p.status));
+      const kp = (l, v, sub, hot) => h("div", { class: "kpi" + (hot ? " hot" : "") }, h("div", { class: "kpi-l" }, l), h("div", { class: "kpi-v" }, String(v)), h("div", { class: "kpi-s" }, sub));
+      box.replaceChildren(
+        h("div", { class: "row", style: "margin-bottom:10px" }, h("h2", { style: "margin:0" }, "Paiements"), h("button", { class: "ghost", onclick: go("payments") }, "Tous les paiements")),
+        d.totals.length ? h("div", { class: "kpis" }, d.totals.flatMap((t) => [
+          kp("Encaissé (30 jours)", money(t.paid30, t.currency), "Total : " + money(t.paid, t.currency)),
+          kp("À vérifier (" + t.currency + ")", t.review, t.pending + " en attente", t.review > 0)])) : h("p", { class: "muted" }, "Aucun paiement enregistré pour l’instant."),
+        todo.length ? h("div", {}, h("div", { class: "paysub" }, "À traiter (" + todo.length + ")"), ...todo.slice(0, 5).map(line)) : "",
+        done.length ? h("div", {}, h("div", { class: "paysub" }, "Dernières transactions"), ...done.map(line)) : "",
+        h("div", { class: "row", style: "margin-top:12px;justify-content:flex-start" },
+          h("button", { class: "ghost", onclick: go("contracts") }, "Contrats & reçus"),
+          sup ? h("button", { class: "ghost", onclick: go("paysettings") }, "Moyens de paiement") : ""));
+    }).catch((x) => box.replaceChildren(h("h2", {}, "Paiements"), h("p", { class: "err" }, x.message)));
+    return box;
+  }
+
   function dashboardView() {
     const box = h("div", {}, h("p", { class: "muted" }, "Chargement…"));
     api("/api/console?a=stats").then((s) => {
@@ -348,6 +377,7 @@
           kpi("Acomptes encaissés", rev, s.orders.cash_pending + " espèces à encaisser"),
           kpi("Messages non lus", counts.chat + s.messagesUnread, counts.chat + " chat · " + s.messagesUnread + " contact", counts.chat + s.messagesUnread > 0),
           kpi("Suggestions", counts.suggestions, "non lues")),
+        paymentsCard(),
         housesCard(),
         h("div", { class: "two" },
           h("div", { class: "card" }, h("h2", {}, "Activité des 14 derniers jours"), barChart(s.days),
@@ -364,13 +394,34 @@
     let cur = 0;
     const list = h("div", { class: "chat-list" }), pane = h("div", { class: "chat-pane" }, h("p", { class: "muted", style: "padding:16px" }, "Sélectionnez une conversation."));
     let msgsBox = null, lastId = 0;
+    // Super administrateur : conversations groupées par type de client (locataires, acquéreurs, demandes en cours, autres, privées)
+    const sup = me.role === "super_admin";
+    const CAT = { tenant: "Locataires", buyer: "Acquéreurs", pending: "Demandes en cours", other: "Autres clients", direct: "Entre clients" };
+    const ORDER = ["tenant", "buyer", "pending", "other", "direct"];
+    const catOf = (t) => (t.kind === "direct" ? "direct" : t.is_tenant ? "tenant" : t.is_buyer ? "buyer" : t.has_pending ? "pending" : "other");
+    let filter = "all", rowsCache = []; const closed = new Set();
+    const threadBtn = (t) => h("button", { class: "thread" + (t.id === cur ? " on" : ""), onclick: () => open(t) },
+      h("div", { class: "row" }, h("strong", {}, t.kind === "support" ? t.a_name : t.a_name + " ↔ " + t.b_name), t.unread ? h("span", { class: "badge" }, String(t.unread)) : ""),
+      h("small", {}, (t.kind === "direct" ? "Privé · " : "") + snip(t.last_body)),
+      sup && t.kind === "support" && (t.is_tenant || t.is_buyer || t.has_pending) ? h("div", { class: "tags" }, t.is_tenant ? h("span", { class: "pill" }, "Locataire") : "", t.is_buyer ? h("span", { class: "pill" }, "Acquéreur") : "", t.has_pending ? h("span", { class: "pill" }, "Demande en cours") : "") : "");
+    function paint() {
+      if (!rowsCache.length) { list.replaceChildren(h("p", { class: "muted", style: "padding:14px" }, "Aucune conversation.")); return; }
+      if (!sup) { list.replaceChildren(...rowsCache.map(threadBtn)); return; }
+      const g = Object.fromEntries(ORDER.map((k) => [k, []]));
+      rowsCache.forEach((t) => g[catOf(t)].push(t));
+      const unreadOf = (items) => items.reduce((n, t) => n + (t.unread || 0), 0);
+      const chip = (k, label, items) => h("button", { type: "button", class: "stab" + (filter === k ? " on" : ""), onclick: () => { filter = k; paint(); } }, label + " (" + items.length + ")", unreadOf(items) ? h("span", { class: "badge" }, String(unreadOf(items))) : "");
+      const sections = ORDER.filter((k) => (filter === "all" || filter === k) && g[k].length).map((k) => {
+        const shut = filter === "all" && closed.has(k), un = unreadOf(g[k]);
+        return h("div", { class: "tgroup" },
+          h("button", { type: "button", class: "tg-head", onclick: () => { if (closed.has(k)) closed.delete(k); else closed.add(k); paint(); } }, h("span", {}, (shut ? "▸ " : "▾ ") + CAT[k] + " (" + g[k].length + ")"), un ? h("span", { class: "badge" }, String(un)) : ""),
+          ...(shut ? [] : g[k].map(threadBtn)));
+      });
+      list.replaceChildren(h("div", { class: "tabs chat-filter" }, chip("all", "Tous", rowsCache), ...ORDER.filter((k) => g[k].length).map((k) => chip(k, CAT[k], g[k]))),
+        ...(sections.length ? sections : [h("p", { class: "muted", style: "padding:14px" }, "Aucune conversation dans cette catégorie.")]));
+    }
     async function loadList() {
-      try {
-        const rows = await api("/api/chat?a=admin_threads");
-        list.replaceChildren(...(rows.length ? rows.map((t) => h("button", { class: "thread" + (t.id === cur ? " on" : ""), onclick: () => open(t) },
-          h("div", { class: "row" }, h("strong", {}, t.kind === "support" ? t.a_name : t.a_name + " ↔ " + t.b_name), t.unread ? h("span", { class: "badge" }, String(t.unread)) : ""),
-          h("small", {}, (t.kind === "direct" ? "Privé · " : "") + snip(t.last_body)))) : [h("p", { class: "muted", style: "padding:14px" }, "Aucune conversation.")]));
-      } catch (e) {}
+      try { rowsCache = await api("/api/chat?a=admin_threads"); paint(); } catch (e) {}
     }
     async function loadMsgs(first) {
       if (!cur || !msgsBox) return;
@@ -455,9 +506,11 @@
         Object.assign(me, r.user); window._flash = "Profil enregistré."; render();
       } catch (x) { imsg.className = "err"; imsg.textContent = x.message; }
     } },
-      h("div", { class: "who-card" }, slot, h("div", {}, h("strong", { style: "font-size:1.1rem" }, me.name || me.email), " ", presenceBadge(), h("br"),
-        h("span", { class: "muted" }, me.email + " · " + (me.role === "super_admin" ? "Super administrateur" : "Administrateur")), h("br"),
-        h("span", { class: "muted" }, "Votre statut est visible par le super administrateur dans Supervision > Utilisateurs."))),
+      h("div", { class: "who-card" }, slot, h("div", { class: "who-txt" },
+        h("div", { class: "who-name" }, h("strong", {}, me.name || me.email), presenceBadge()),
+        h("div", { class: "muted who-mail" }, me.email),
+        h("span", { class: "pill" + (me.role === "super_admin" ? " sup" : "") }, me.role === "super_admin" ? "Super administrateur" : "Administrateur"))),
+      h("p", { class: "muted who-hint" }, me.role === "super_admin" ? "Votre statut en ligne est visible dans Supervision > Utilisateurs en ligne." : "Votre statut est visible par le super administrateur dans Supervision > Utilisateurs."),
       h("div", { class: "row", style: "justify-content:flex-start;margin-bottom:12px" },
         h("button", { type: "button", class: "ghost", onclick: () => file.click() }, avatar ? "Changer la photo" : "Ajouter une photo"),
         avatar ? h("button", { type: "button", class: "ghost", onclick: () => { avatar = ""; repaint(); } }, "Retirer") : "", file),

@@ -85,3 +85,30 @@ textarea{min-height:84px}.chk{display:flex;gap:6px;align-items:center}.chk input
 @media (pointer:coarse){input,select,textarea{font-size:16px}}
 button,a,.nav,.stab,.bb,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 html{-webkit-text-size-adjust:100%}body{overflow-x:clip}
+
+/* ---- Profil : la photo ne chevauche plus le texte, présentation en colonnes lisibles ---- */
+.who-card{align-items:flex-start;margin-bottom:10px}
+.who-card>.avatar-slot{flex:none;min-width:84px}
+.who-txt{display:grid;gap:5px;min-width:0}
+.who-name{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;font-size:1.15rem}
+.who-mail{overflow-wrap:anywhere;font-size:.92rem}
+.pill.sup{color:var(--acc);border-color:var(--acc);justify-self:start;font-weight:600}
+.who-hint{font-size:.83rem;margin:0 0 16px}
+@media (max-width:520px){.who-card{gap:14px}.who-card>.avatar-slot{min-width:72px}.avatar.lg{width:72px;height:72px;font-size:1.4rem}}
+
+/* ---- Filtres en pastilles (Archives, etc.) : espacement régulier, rien ne se touche ---- */
+.tabs{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 18px}
+.tabs .stab{padding:8px 16px}
+
+/* ---- Messagerie groupée par type de client (super administrateur) ---- */
+.chat-filter{position:sticky;top:0;z-index:1;gap:6px;margin:0;padding:10px;background:var(--card);border-bottom:1px solid var(--line)}
+.chat-filter .stab{padding:4px 11px;font-size:.78rem}
+.tgroup{border-bottom:1px solid var(--line)}
+.tg-head{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;background:var(--bg);color:var(--mut);border:0;border-radius:0;padding:9px 12px;font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;text-align:left}
+.thread .tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.thread .tags .pill{font-size:.66rem;padding:1px 7px}
+@media (max-width:860px){.chat-list{max-height:min(340px,45vh)}}
+
+/* ---- Module Paiements du tableau de bord ---- */
+.payline{padding:9px 0;border-bottom:1px solid var(--line)}.payline:last-child{border-bottom:0}
+.paysub{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:14px 0 4px}
+.pill.st-paid{color:var(--ok);border-color:var(--ok)}.pill.st-review{color:var(--warn);border-color:var(--warn)}.pill.st-failed{color:var(--bad);border-color:var(--bad)}
