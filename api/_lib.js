@@ -133,6 +133,122 @@ export async function findReset(kind, token) {
   return r || null;
 }
 export const burnResets = (kind, accountId) => sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${accountId} AND used_at IS NULL`;
+--- DÉBUT DU CODE À AJOUTER ---
+
+// Points d'entrée communs utilisés par les API administrateur et client.
+export async function requestReset(req, res, kind) {
+  if (!["admin", "customer"].includes(kind)) return send(res, 400, { error: "Demande invalide." });
+  if (!(await throttle(req, res, kind === "admin" ? "aforgot" : "cforgot", 5, 3600))) return;
+
+  const email = str(req.body?.email, 254).toLowerCase();
+  if (!emailOk(email)) return send(res, 400, { error: "Adresse e-mail invalide." });
+  if (!(await ensureSchema())) return send(res, 503, { error: "Réinitialisation temporairement indisponible." });
+
+  const rows = kind === "admin"
+    ? await sql`SELECT id, name, email FROM users WHERE email = ${email} AND active = true`
+    : await sql`SELECT id, name, email FROM customers WHERE email = ${email} AND active = true`;
+
+  if (rows[0]) {
+    const path = kind === "admin" ? "/login" : "/connexion";
+    await startReset(
+      req,
+      kind,
+      rows[0],
+      path,
+      kind === "admin" ? "compte administrateur" : "compte client"
+    );
+  }
+
+  // Réponse identique, que le compte existe ou non, pour éviter l'énumération des adresses.
+  return send(res, 200, {
+    ok: true,
+    message: "Si un compte actif correspond à cette adresse, un lien de réinitialisation sera envoyé."
+  });
+}
+
+export async function applyReset(req, res) {
+  const token = str(req.body?.token, 64);
+  const password = typeof req.body?.password === "string"
+    ? req.body.password
+    : typeof req.body?.newPassword === "string"
+      ? req.body.newPassword
+      : "";
+
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    return send(res, 400, { error: "Lien de réinitialisation invalide ou expiré." });
+  }
+
+  const adminReset = await findReset("admin", token);
+  const kind = adminReset ? "admin" : "customer";
+  const reset = adminReset || await findReset("customer", token);
+
+  if (!reset) {
+    return send(res, 400, { error: "Lien de réinitialisation invalide ou expiré." });
+  }
+
+  const min = kind === "admin" ? 12 : 8;
+  if (password.length < min || password.length > 200) {
+    return send(res, 400, {
+      error: `Le nouveau mot de passe doit contenir au moins ${min} caractères.`
+    });
+  }
+
+  if (kind === "admin") {
+    const [account] = await sql`
+      SELECT id, active, totp_enabled, totp_secret
+      FROM users
+      WHERE id = ${reset.account_id}
+    `;
+
+    if (!account || !account.active) {
+      return send(res, 400, { error: "Compte indisponible." });
+    }
+
+    if (
+      account.totp_enabled &&
+      (!account.totp_secret || !verifyTotp(decrypt(account.totp_secret), req.body?.code))
+    ) {
+      return send(res, 401, { error: "Le code de double authentification est incorrect." });
+    }
+
+    await sql`
+      UPDATE users
+      SET password_hash = ${hashPassword(password)},
+          failed_logins = 0,
+          locked_until = NULL
+      WHERE id = ${account.id}
+    `;
+    await sql`DELETE FROM sessions WHERE user_id = ${account.id}`;
+  } else {
+    const [account] = await sql`
+      SELECT id, active
+      FROM customers
+      WHERE id = ${reset.account_id}
+    `;
+
+    if (!account || !account.active) {
+      return send(res, 400, { error: "Compte indisponible." });
+    }
+
+    await sql`
+      UPDATE customers
+      SET password_hash = ${hashPassword(password)},
+          failed_logins = 0,
+          locked_until = NULL
+      WHERE id = ${account.id}
+    `;
+    await sql`DELETE FROM customer_sessions WHERE customer_id = ${account.id}`;
+  }
+
+  await burnResets(kind, reset.account_id);
+  return send(res, 200, {
+    ok: true,
+    message: "Mot de passe réinitialisé. Vous pouvez vous connecter."
+  });
+}
+
+--- FIN DU CODE À AJOUTER ---
+
 
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
