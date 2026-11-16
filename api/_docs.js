@@ -1,394 +1,222 @@
-// Reçus de paiement et contrats (PDF), identité de l'agence.
-// Appelé par api/payments.js (fichier « _ » : ce n'est pas une fonction Vercel supplémentaire).
-// Le PDF est généré ici même, sans dépendance externe (polices standard Helvetica / Helvetica-Bold).
-import { sql, send, requireUser, requireCustomer, currentUser, currentCustomer, sameOrigin, audit, str, notifyCustomer } from "./_lib.js";
+// Documents PDF : reçus de paiement et contrats (location, vente, réservation).
+import { sql, send, currentUser, currentCustomer, sameOrigin, audit, str, notifyCustomer, encrypt, decrypt } from "./_lib.js";
+import { Pdf, amountWords, fmtMoney, fmtDate } from "./_pdf.js";
+import { METHOD_LABEL } from "./_pay.js";
 
-export const DOC_ACTIONS = new Set(["agency", "contract", "contract_create", "contract_void", "contracts", "mydocs", "receipt"]);
-export const KINDS = { location: "Contrat de bail", vente: "Promesse de vente", reservation: "Contrat de réservation" };
-const PREFIX = { location: "BAIL", vente: "PROM", reservation: "RESA" };
-const METHOD_LABEL = { cash: "Espèces", orange_money: "Orange Money", mtn_money: "MTN Mobile Money", card: "Carte Visa / Mastercard", paypal: "PayPal", bank_transfer: "Virement bancaire" };
+export const KINDS = { location: "Contrat de location (bail d’habitation)", vente: "Promesse de vente immobilière", reservation: "Contrat de réservation" };
+const DISCLAIMER = "Modèle établi par l’agence. Il doit être relu et adapté par un conseil juridique ; un acte de vente d’immeuble doit être passé devant notaire.";
 
-// ====================================================================================================
-// Mise en forme
-// ====================================================================================================
-const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
-export function fdate(v) {
-  if (!v) return "";
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return `${Number(v.slice(8, 10))} ${MONTHS[Number(v.slice(5, 7)) - 1]} ${v.slice(0, 4)}`;
-  const d = new Date(v);
-  if (isNaN(d)) return "";
-  try {
-    const p = Object.fromEntries(new Intl.DateTimeFormat("fr-FR", { timeZone: process.env.SITE_TZ || "Africa/Douala", day: "numeric", month: "numeric", year: "numeric" }).formatToParts(d).map((x) => [x.type, x.value]));
-    return `${Number(p.day)} ${MONTHS[Number(p.month) - 1]} ${p.year}`;
-  } catch { return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; }
-}
-export function money(n, cur = "") {
-  const x = Number(n) || 0, neg = x < 0, a = Math.abs(x);
-  const [i, f] = (Number.isInteger(a) ? String(a) : a.toFixed(2)).split(".");
-  return (neg ? "-" : "") + i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (f ? "," + f : "") + (cur ? " " + cur : "");
-}
-const dots = (v, n = 22) => (v && String(v).trim() ? String(v).trim() : ".".repeat(n));
-export const receiptNumber = (p) => "REC-" + new Date(p.confirmed_at || p.created_at).getUTCFullYear() + "-" + String(p.id).padStart(6, "0");
-
-// ====================================================================================================
-// Petit générateur de PDF (A4, texte, filets, encadrés)
-// ====================================================================================================
-// Largeurs des polices standard (1/1000 em) pour les caractères 32 à 126.
-const WR = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015,
-  667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333,
-  556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
-const WB = [278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975,
-  722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333,
-  556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584];
-const SPECIAL = { "€": 556, "’": 222, "‘": 222, "“": 333, "”": 333, "–": 556, "—": 1000, "…": 1000, "•": 350, "œ": 944, "Œ": 1000, "«": 556, "»": 556, "°": 400, "\u00a0": 278, "\u202f": 278, "\u2009": 278 };
-function cw(ch, bold) {
-  const c = ch.charCodeAt(0);
-  if (c >= 32 && c <= 126) return (bold ? WB : WR)[c - 32];
-  if (SPECIAL[ch] != null) return SPECIAL[ch];
-  const base = ch.normalize("NFD")[0];
-  return base && base !== ch ? cw(base, bold) : 556;
-}
-const WIN = { "€": 0x80, "…": 0x85, "‘": 0x91, "’": 0x92, "“": 0x93, "”": 0x94, "•": 0x95, "–": 0x96, "—": 0x97, "™": 0x99, "œ": 0x9c, "Œ": 0x8c, "\u202f": 0x20, "\u2009": 0x20, "\u00a0": 0x20 };
-function hex(s) {
-  let out = "";
-  for (const ch of String(s)) {
-    const c = ch.charCodeAt(0);
-    const b = WIN[ch] ?? (c >= 32 && c <= 255 ? c : 0x3f);
-    out += b.toString(16).padStart(2, "0");
-  }
-  return out;
+let docsP;
+export function ensureDocs() {
+  docsP ??= (async () => {
+    try {
+      await sql`CREATE TABLE IF NOT EXISTS contracts (
+        id bigserial PRIMARY KEY, number text NOT NULL DEFAULT '', order_id bigint NOT NULL, customer_id bigint NOT NULL, kind text NOT NULL,
+        data text NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'issued', created_by bigint, created_at timestamptz NOT NULL DEFAULT now())`;
+      await sql`CREATE INDEX IF NOT EXISTS contracts_order_idx ON contracts (order_id)`;
+      await sql`CREATE INDEX IF NOT EXISTS contracts_customer_idx ON contracts (customer_id)`;
+      return true;
+    } catch { return false; }
+  })().then((ok) => { if (!ok) docsP = null; return ok; });
+  return docsP;
 }
 
-const INK = [0.1, 0.12, 0.16], GREY = [0.42, 0.45, 0.5], ACCENT = [0.18, 0.31, 0.62];
-class Pdf {
-  constructor() { this.W = 595; this.H = 842; this.M = 54; this.pages = []; this.newPage(); }
-  newPage() { this.ops = []; this.pages.push(this.ops); this.y = this.H - this.M; }
-  need(h) { if (this.y - h < this.M + 26) this.newPage(); }
-  width(s, size, bold) { let w = 0; for (const ch of s) w += cw(ch, bold); return (w * size) / 1000; }
-  wrap(s, size, bold, maxW) {
-    const lines = []; let cur = "";
-    for (let word of s.split(/\s+/).filter(Boolean)) {
-      while (this.width(word, size, bold) > maxW) { // mot plus large que la ligne : coupé
-        let k = word.length; while (k > 1 && this.width(word.slice(0, k), size, bold) > maxW) k--;
-        if (cur) { lines.push(cur); cur = ""; }
-        lines.push(word.slice(0, k)); word = word.slice(k);
-      }
-      const t = cur ? cur + " " + word : word;
-      if (this.width(t, size, bold) <= maxW) cur = t; else { if (cur) lines.push(cur); cur = word; }
-    }
-    if (cur) lines.push(cur);
-    return lines;
-  }
-  put(x, y, s, size, bold, color) {
-    this.ops.push(`${color[0]} ${color[1]} ${color[2]} rg BT /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td <${hex(s)}> Tj ET`);
-  }
-  text(s, o = {}) {
-    const { size = 10, bold = false, align = "left", indent = 0, color = INK, after = 4, lead = 1.4, x0 = this.M + indent } = o;
-    const maxW = o.maxW ?? this.W - this.M - x0;
-    const lines = [];
-    for (const p of String(s ?? "").split("\n")) lines.push(...(p.trim() === "" ? [""] : this.wrap(p, size, bold, maxW)));
-    for (const ln of lines) {
-      this.need(size * lead);
-      const w = this.width(ln, size, bold), x = align === "right" ? x0 + maxW - w : align === "center" ? x0 + (maxW - w) / 2 : x0;
-      if (ln) this.put(x, this.y - size, ln, size, bold, color);
-      this.y -= size * lead;
-    }
-    this.y -= after;
-  }
-  gap(h = 8) { this.y -= h; }
-  rule(o = {}) {
-    const { color = [0.8, 0.82, 0.86], w = 0.8, after = 8 } = o;
-    this.need(10);
-    this.ops.push(`${color[0]} ${color[1]} ${color[2]} RG ${w} w ${this.M} ${(this.y - 2).toFixed(2)} m ${this.W - this.M} ${(this.y - 2).toFixed(2)} l S`);
-    this.y -= after;
-  }
-  box(h, fill = [0.94, 0.96, 1]) {
-    this.need(h);
-    this.ops.push(`${fill[0]} ${fill[1]} ${fill[2]} rg ${this.M} ${(this.y - h).toFixed(2)} ${this.W - 2 * this.M} ${h} re f`);
-  }
-  kv(rows, labelW = 150) {
-    for (const [k, v] of rows) {
-      if (v == null || String(v).trim() === "") continue;
-      const lines = this.wrap(String(v), 10, false, this.W - 2 * this.M - labelW);
-      this.need(14 * Math.max(1, lines.length));
-      this.put(this.M, this.y - 10, k, 9, true, GREY);
-      for (const ln of lines) { this.put(this.M + labelW, this.y - 10, ln, 10, false, INK); this.y -= 14; }
-      this.y -= 2;
-    }
-  }
-  signatures(left, right) {
-    this.need(110);
-    const colW = (this.W - 2 * this.M - 30) / 2, y = this.y;
-    for (const [i, [title, name]] of [left, right].entries()) {
-      const x = this.M + i * (colW + 30);
-      this.put(x, y - 10, title, 10, true, INK);
-      if (name) this.put(x, y - 24, name, 9, false, GREY);
-      this.put(x, y - 40, "Signature précédée de « Lu et approuvé » :", 8, false, GREY);
-      this.ops.push(`0.6 0.62 0.66 RG 0.8 w ${x} ${(y - 90).toFixed(2)} m ${(x + colW).toFixed(2)} ${(y - 90).toFixed(2)} l S`);
-    }
-    this.y = y - 104;
-  }
-  toBuffer({ title, footer }) {
-    const n = this.pages.length;
-    this.pages.forEach((ops, i) => {
-      ops.push(`0.8 0.82 0.86 RG 0.6 w ${this.M} 44 m ${this.W - this.M} 44 l S`);
-      const f = footer || "", pg = `Page ${i + 1} / ${n}`;
-      ops.push(`${GREY[0]} ${GREY[1]} ${GREY[2]} rg BT /F1 8 Tf ${this.M} 30 Td <${hex(f)}> Tj ET`);
-      ops.push(`${GREY[0]} ${GREY[1]} ${GREY[2]} rg BT /F1 8 Tf ${(this.W - this.M - this.width(pg, 8, false)).toFixed(2)} 30 Td <${hex(pg)}> Tj ET`);
-    });
-    let out = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
-    const offs = [];
-    const add = (id, body) => { offs[id] = out.length; out += `${id} 0 obj\n${body}\nendobj\n`; };
-    const pageIds = this.pages.map((_, i) => 6 + 2 * i);
-    add(1, "<< /Type /Catalog /Pages 2 0 R >>");
-    add(2, `<< /Type /Pages /Kids [${pageIds.map((p) => p + " 0 R").join(" ")}] /Count ${n} >>`);
-    add(3, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-    add(4, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
-    add(5, `<< /Title (${String(title || "Document").replace(/[^\x20-\x7e]/g, "").replace(/[()\\]/g, "")}) /Producer (Maison) >>`);
-    this.pages.forEach((ops, i) => {
-      const content = ops.join("\n");
-      add(6 + 2 * i, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.W} ${this.H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${7 + 2 * i} 0 R >>`);
-      add(7 + 2 * i, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-    });
-    const size = 6 + 2 * n, xref = out.length;
-    out += `xref\n0 ${size}\n0000000000 65535 f \n`;
-    for (let i = 1; i < size; i++) out += String(offs[i]).padStart(10, "0") + " 00000 n \n";
-    out += `trailer\n<< /Size ${size} /Root 1 0 R /Info 5 0 R >>\nstartxref\n${xref}\n%%EOF`;
-    return Buffer.from(out, "latin1");
-  }
-}
-
-// ====================================================================================================
-// Identité de l'agence (en-tête des documents)
-// ====================================================================================================
-const AGENCY_KEYS = ["name", "legal", "address", "city", "phone", "email", "rccm", "niu", "rep", "repTitle"];
+// ---------- Identité de l'agence (affichée sur les documents) ----------
+export const AGENCY_DEFAULT = { name: "Location et vente immobilière", legal: "", address: "", city: "Douala", phone: "", email: "", rccm: "", niu: "", rep: "", repTitle: "Directeur" };
 export async function loadAgency() {
-  const e = process.env;
-  const a = { name: e.COMPANY_NAME || "Maison — Location et vente immobilière", legal: e.COMPANY_LEGAL || "", address: e.COMPANY_ADDRESS || "", city: "", phone: e.COMPANY_PHONE || "", email: e.COMPANY_EMAIL || "", rccm: "", niu: "", rep: "", repTitle: "" };
-  try {
-    const [r] = await sql`SELECT value FROM payment_settings WHERE key = 'agency'`;
-    if (r) { const s = JSON.parse(r.value); for (const k of AGENCY_KEYS) if (typeof s[k] === "string" && s[k].trim()) a[k] = s[k]; }
-  } catch { /* identité par défaut */ }
+  try { const [r] = await sql`SELECT value FROM payment_settings WHERE key = 'agency'`; if (r) return { ...AGENCY_DEFAULT, ...JSON.parse(decrypt(r.value)) }; } catch { /* valeurs par défaut */ }
+  return { ...AGENCY_DEFAULT };
+}
+const clean = (v, max) => str(typeof v === "string" ? v.replace(/[\u0000-\u001f<>]/g, " ") : "", max);
+export async function saveAgency(input, userId) {
+  const a = {};
+  for (const k of Object.keys(AGENCY_DEFAULT)) { const v = clean(input?.[k], k === "address" ? 200 : 100); a[k] = v || (k === "name" ? AGENCY_DEFAULT.name : ""); }
+  await sql`INSERT INTO payment_settings (key, value, updated_by, updated_at) VALUES ('agency', ${encrypt(JSON.stringify(a))}, ${userId}, now())
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`;
   return a;
 }
-function letterhead(pdf, ag, title, ref, date) {
-  pdf.text(ag.name, { size: 15, bold: true, color: ACCENT, after: 1 });
-  const l1 = [ag.legal, ag.address, ag.city].filter(Boolean).join(" · "), l2 = [ag.phone && "Tél. " + ag.phone, ag.email, ag.rccm && "RCCM " + ag.rccm, ag.niu && "NIU " + ag.niu].filter(Boolean).join(" · ");
-  if (l1) pdf.text(l1, { size: 8.5, color: GREY, after: 0 });
-  if (l2) pdf.text(l2, { size: 8.5, color: GREY, after: 0 });
-  pdf.gap(6); pdf.rule({ color: ACCENT, w: 1.4, after: 12 });
-  pdf.text(title, { size: 17, bold: true, after: 2 });
-  pdf.text([ref, date].filter(Boolean).join("  ·  "), { size: 9.5, color: GREY, after: 12 });
-}
 
-// ====================================================================================================
-// Reçu de paiement
-// ====================================================================================================
-export function buildReceipt(p, ag) {
-  const pdf = new Pdf(), num = receiptNumber(p);
-  letterhead(pdf, ag, "REÇU DE PAIEMENT", "N° " + num, "Établi le " + fdate(p.confirmed_at || p.created_at));
-  pdf.box(60);
-  const top = pdf.y;
-  pdf.put(pdf.M + 16, top - 20, "MONTANT REÇU", 9, true, GREY);
-  pdf.put(pdf.M + 16, top - 46, money(p.amount, p.currency), 22, true, ACCENT);
-  pdf.y = top - 60 - 16;
-  pdf.kv([
-    ["Reçu de", p.customer_name], ["E-mail", p.customer_email], ["Téléphone", p.customer_phone],
-    ["Objet", p.property_title ? `Acompte — ${p.property_title}` : "Acompte"],
-    ["Demande n°", String(p.order_id)], ["Moyen de paiement", METHOD_LABEL[p.method] || p.method],
-    ["Référence de transaction", p.provider_ref || p.reference], ["Date de paiement", fdate(p.confirmed_at || p.created_at)],
-    ["Payeur", p.payer_name || p.payer_phone], ["Validé par", p.confirmed_by_name], ["Statut", "Payé"]
-  ]);
-  pdf.gap(10); pdf.rule();
-  pdf.text("Ce reçu atteste que la somme ci-dessus a bien été reçue par l’agence au titre de l’acompte relatif au bien désigné. Il est établi électroniquement et ne nécessite pas de signature.", { size: 9, color: GREY });
-  return pdf.toBuffer({ title: "Reçu " + num, footer: `${ag.name} — ${num}` });
-}
-
-// ====================================================================================================
-// Contrats (modèles indicatifs : à faire relire par un notaire ou un juriste avant signature)
-// ====================================================================================================
-const nInt = (v, min, max, d) => { const x = Math.round(Number(v)); return Number.isFinite(x) ? Math.min(Math.max(x, min), max) : d; };
-const nNum = (v) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? Math.min(x, 1e12) : 0; };
-const dOk = (v) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
-export function cleanParams(p = {}) {
-  return {
-    city: str(p.city, 80), date: dOk(p.date) || new Date().toISOString().slice(0, 10), clientId: str(p.clientId, 80), clientAddress: str(p.clientAddress, 200),
-    partyName: str(p.partyName, 120), partyRep: str(p.partyRep, 120), notes: str(p.notes, 1500),
-    rent: nNum(p.rent), charges: nNum(p.charges), deposit: nNum(p.deposit), months: nInt(p.months, 1, 240, 12), start: dOk(p.start), payDay: nInt(p.payDay, 1, 28, 5), notice: nInt(p.notice, 1, 12, 1),
-    price: nNum(p.price), deadline: dOk(p.deadline), notary: str(p.notary, 120), penalty: nNum(p.penalty), commission: nNum(p.commission), buyerFees: p.buyerFees !== false,
-    validity: nInt(p.validity, 1, 365, 15), refundable: p.refundable !== false
+function letterhead(agency, title, number) {
+  return (d) => {
+    d.rect(0, 841.89 - 70, 595.28, 70, [0.04, 0.42, 0.37]);
+    d.color(1, 1, 1); d._text(54, 841.89 - 34, agency.name, 16, "F2");
+    const sub = [agency.address, agency.phone && "Tél. " + agency.phone, agency.email].filter(Boolean).join("  ·  ");
+    if (sub) d._text(54, 841.89 - 52, sub, 8.5, "F1");
+    d.color(0.1, 0.12, 0.12); d.y = 841.89 - 100;
+    void title; void number;
   };
 }
+const idLine = (a) => [a.legal, a.rccm && "RCCM " + a.rccm, a.niu && "NIU " + a.niu].filter(Boolean).join(" — ");
 
-function agencyLine(ag) {
-  return [ag.name, ag.legal, ag.address && "sis " + ag.address, ag.rccm && "RCCM " + ag.rccm, ag.niu && "NIU " + ag.niu].filter(Boolean).join(", ") +
-    (ag.rep ? `, représentée par ${ag.rep}${ag.repTitle ? " (" + ag.repTitle + ")" : ""}` : "");
-}
-function partyLine(d, ag) {
-  return d.partyName ? `${d.partyName}${d.partyRep ? ", représenté(e) par " + d.partyRep : ""}, ayant confié la gestion de l’opération à ${ag.name}` : agencyLine(ag);
-}
-function clientLine(d, c) {
-  return `${c.name}, e-mail ${c.email}, téléphone ${dots(c.phone, 14)}, pièce d’identité n° ${dots(d.clientId)}, demeurant à ${dots(d.clientAddress, 30)}`;
-}
-function propLine(pr, o) {
-  const t = pr?.title || o.property_title || "le bien désigné";
-  const det = pr ? [pr.location && "situé à " + pr.location, pr.area > 0 && `superficie ${pr.area} m²`, pr.rooms > 0 && `${pr.rooms} pièce(s)`, pr.bedrooms > 0 && `${pr.bedrooms} chambre(s)`].filter(Boolean).join(", ") : "";
-  return det ? `« ${t} », ${det}` : `« ${t} »`;
+// ---------- Reçu de paiement ----------
+export function receiptPdf({ agency, p, order, customer }) {
+  const year = new Date(p.confirmed_at || p.created_at).getFullYear(), number = `REC-${year}-${String(p.id).padStart(6, "0")}`;
+  const d = new Pdf({ title: "Reçu " + number, footer: `${agency.name} — Reçu ${number}`, header: letterhead(agency) });
+  d.h1("REÇU DE PAIEMENT");
+  d.kv([["Numéro", number], ["Date du paiement", fmtDate(p.confirmed_at || p.created_at)], ["Reçu de", customer.name], ["E-mail", customer.email], ["Téléphone", customer.phone || "—"]]);
+  d.box([`Montant reçu : ${fmtMoney(p.amount, p.currency)}`, `Arrêté à la somme de : ${amountWords(p.amount, p.currency)}.`]);
+  d.h2("Détail");
+  d.kv([["Objet", `Acompte de réservation — ${order.property_title || "bien immobilier"}`], ["Demande n°", String(p.order_id)], ["Moyen de paiement", METHOD_LABEL[p.method] || p.method],
+    ["Référence", p.provider_ref || p.reference], ...(p.charged_amount ? [["Montant débité", `${p.charged_amount} ${p.charged_currency}`]] : []), ["Statut", "PAYÉ"]]);
+  d.p("Ce reçu atteste que la somme ci-dessus a bien été encaissée par l’agence et enregistrée sur la demande indiquée. Il est généré électroniquement et reste valable sans signature manuscrite.", { size: 9.5, italic: true, color: [0.4, 0.45, 0.45] });
+  d.signatures("Pour l’agence", "Le client");
+  if (idLine(agency)) d.p(idLine(agency), { size: 8.5, align: "center", color: [0.4, 0.45, 0.45] });
+  return { number, buffer: d.build() };
 }
 
-export function buildContract(k, o, c, pr, ag, paid) {
-  const d = k.data, kind = k.kind, pdf = new Pdf();
-  const cur = pr?.currency || o.currency || "XAF";
-  letterhead(pdf, ag, KINDS[kind].toUpperCase(), "N° " + k.number, `${d.city ? d.city + ", le " : "Établi le "}${fdate(d.date)}`);
-  const art = (t) => pdf.text(t, { size: 11, bold: true, color: ACCENT, after: 2 });
-  const p = (t) => pdf.text(t, { size: 10, after: 7 });
-  const acompte = paid ? `Un acompte de ${money(paid.amount, paid.currency)} a été versé le ${fdate(paid.confirmed_at)} (reçu n° ${receiptNumber(paid)}).` : "";
-  const bailleur = d.partyName || ag.name;
+// ---------- Contrats ----------
+const n = (v) => Math.max(0, Math.round(Number(v) || 0));
+const iso = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+export function normalizeParams(kind, p = {}) {
+  const base = { city: clean(p.city, 60), date: iso(p.date), notes: clean(p.notes, 800), partyName: clean(p.partyName, 100), partyRep: clean(p.partyRep, 100), clientId: clean(p.clientId, 60), clientAddress: clean(p.clientAddress, 160) };
+  if (kind === "location") return { ...base, rent: n(p.rent), charges: n(p.charges), deposit: n(p.deposit), months: n(p.months) || 12, start: iso(p.start), payDay: Math.min(28, n(p.payDay) || 5), notice: n(p.notice) || 1 };
+  if (kind === "vente") return { ...base, price: n(p.price), deadline: iso(p.deadline), notary: clean(p.notary, 100), penalty: n(p.penalty), commission: n(p.commission), buyerFees: p.buyerFees !== false && p.buyerFees !== "false" };
+  if (kind === "reservation") return { ...base, price: n(p.price), validity: n(p.validity) || 15, refundable: p.refundable !== false && p.refundable !== "false" };
+  throw new Error("Type de contrat inconnu.");
+}
 
-  if (kind === "location") {
-    pdf.text("ENTRE LES SOUSSIGNÉS", { size: 10, bold: true, after: 4 });
-    p(`${partyLine(d, ag)}, ci-après « le Bailleur »,`); p("d’une part, et");
-    p(`${clientLine(d, c)}, ci-après « le Locataire »,`); p("d’autre part, il a été convenu ce qui suit.");
-    art("Article 1 — Objet"); p(`Le Bailleur donne à bail au Locataire, qui l’accepte, le bien suivant : ${propLine(pr, o)}, à usage exclusif d’habitation.`);
-    art("Article 2 — Durée"); p(`Le bail est conclu pour une durée de ${d.months} mois à compter du ${d.start ? fdate(d.start) : dots("", 18)}. Il pourra être renouvelé par accord écrit des parties.`);
-    art("Article 3 — Loyer et charges"); p(`Le loyer mensuel est fixé à ${d.rent ? money(d.rent, cur) : dots("", 14)}${d.charges ? `, auquel s’ajoutent ${money(d.charges, cur)} de charges mensuelles` : ""}. Il est payable d’avance, au plus tard le ${d.payDay} de chaque mois.`);
-    art("Article 4 — Dépôt de garantie"); p(`Le Locataire verse un dépôt de garantie de ${d.deposit ? money(d.deposit, cur) : dots("", 14)}, non productif d’intérêts. Il est restitué dans un délai de deux mois après la remise des clés et l’état des lieux de sortie, déduction faite des sommes dues au titre des loyers, charges et réparations locatives. ${acompte}`.trim());
-    art("Article 5 — État des lieux"); p("Un état des lieux contradictoire est établi à l’entrée et à la sortie du Locataire. À défaut, le bien est présumé remis en bon état.");
-    art("Article 6 — Obligations du Locataire"); p("Le Locataire s’engage à payer le loyer et les charges aux dates convenues, à user paisiblement du bien suivant sa destination, à l’entretenir, à répondre des dégradations survenues pendant la location, à s’assurer contre les risques locatifs et à ne pas sous-louer ni céder le bail sans l’accord écrit du Bailleur.");
-    art("Article 7 — Obligations du Bailleur"); p("Le Bailleur remet au Locataire un logement décent, lui en assure la jouissance paisible et réalise les grosses réparations qui ne sont pas à la charge du Locataire.");
-    art("Article 8 — Résiliation"); p(`Chaque partie peut mettre fin au bail en respectant un préavis de ${d.notice} mois notifié par écrit. Le Bailleur peut résilier le bail en cas de non-paiement du loyer ou de violation grave du contrat, huit jours après une mise en demeure restée sans effet.`);
-  } else if (kind === "vente") {
-    pdf.text("ENTRE LES SOUSSIGNÉS", { size: 10, bold: true, after: 4 });
-    p(`${partyLine(d, ag)}, ci-après « le Vendeur »,`); p("d’une part, et");
-    p(`${clientLine(d, c)}, ci-après « l’Acquéreur »,`); p("d’autre part, il a été convenu ce qui suit.");
-    art("Article 1 — Objet"); p(`Le Vendeur promet de vendre à l’Acquéreur, qui promet d’acquérir, le bien suivant : ${propLine(pr, o)}, libre de toute occupation, hypothèque ou charge non déclarée.`);
-    art("Article 2 — Prix"); p(`La vente est convenue au prix de ${d.price ? money(d.price, cur) : dots("", 14)}, payable au plus tard à la signature de l’acte authentique.`);
-    art("Article 3 — Acompte"); p(`${acompte || "Un acompte pourra être versé par l’Acquéreur à la signature des présentes."} Il est imputé sur le prix à la réalisation de la vente et reste séquestré jusqu’à l’acte authentique.`);
-    art("Article 4 — Conditions suspensives"); p("La vente est subordonnée à la production par le Vendeur d’un titre de propriété régulier, à l’absence de charge, saisie ou hypothèque non déclarée, et, le cas échéant, à l’obtention par l’Acquéreur de son financement.");
-    art("Article 5 — Acte authentique"); p(`L’acte de vente sera signé devant notaire${d.notary ? " (" + d.notary + ")" : ""} avant le ${d.deadline ? fdate(d.deadline) : dots("", 18)}. Passé ce délai et sauf prorogation écrite, la présente promesse devient caduque.`);
-    art("Article 6 — Frais"); p(`Les frais d’acte et de notaire sont à la charge de ${d.buyerFees ? "l’Acquéreur" : "du Vendeur"}.${d.commission ? ` La commission de l’agence, d’un montant de ${money(d.commission, cur)}, est due à la signature de l’acte authentique.` : ""}`);
-    art("Article 7 — Renonciation"); p(`Si l’Acquéreur renonce sans motif légitime, l’acompte versé reste acquis au Vendeur. Si le Vendeur renonce, il restitue l’acompte${d.penalty ? ` et verse à l’Acquéreur une indemnité de ${money(d.penalty, cur)}` : ""}.`);
+export function contractPdf({ agency, c, order, customer, property }) {
+  const x = JSON.parse(c.data), cur = order.currency || property?.currency || "XAF", city = x.city || agency.city || "";
+  const d = new Pdf({ title: `${KINDS[c.kind]} ${c.number}`, footer: `${agency.name} — ${c.number}`, header: letterhead(agency) });
+  d.h1(KINDS[c.kind].toUpperCase());
+  d.p(`Référence : ${c.number}  ·  Établi le ${fmtDate(x.date || c.created_at)}`, { size: 9.5, color: [0.4, 0.45, 0.45] });
+  const bien = [property?.title || order.property_title, property?.location, property?.kind_label, property?.rooms ? property.rooms + " pièces" : "", property?.bedrooms ? property.bedrooms + " chambre(s)" : "", property?.area ? property.area + " m²" : ""].filter(Boolean).join(", ");
+  const owner = x.partyName || agency.name, ownerRep = x.partyRep || (agency.rep ? `${agency.rep}, ${agency.repTitle}` : "");
+  const client = `${customer.name}${customer.email ? ", e-mail " + customer.email : ""}${customer.phone ? ", tél. " + customer.phone : ""}${x.clientId ? ", pièce d’identité n° " + x.clientId : ""}${x.clientAddress ? ", demeurant à " + x.clientAddress : ""}`;
+  const roleA = c.kind === "location" ? "LE BAILLEUR" : c.kind === "vente" ? "LE VENDEUR" : "L’AGENCE / LE PROPRIÉTAIRE", roleB = c.kind === "location" ? "LE PRENEUR" : c.kind === "vente" ? "L’ACQUÉREUR" : "LE CLIENT";
+  d.h2("Entre les soussignés");
+  d.p(`${roleA} : ${owner}${ownerRep ? ", représenté par " + ownerRep : ""}${idLine(agency) && !x.partyName ? " (" + idLine(agency) + ")" : ""}${agency.address && !x.partyName ? ", " + agency.address : ""}.`, { after: 4 });
+  d.p("d’une part, et", { italic: true, after: 4 });
+  d.p(`${roleB} : ${client}.`, { after: 4 });
+  d.p("d’autre part, il a été convenu ce qui suit.", { italic: true, after: 8 });
+
+  const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+  const money = (v) => `${fmtMoney(v, cur)} (${lowerFirst(amountWords(v, cur))})`;
+  const paid = order.payment_status === "paid" ? `Un acompte de ${money(order.amount)} a été réglé par le ${roleB.toLowerCase()} et est reçu par l’agence.` : `Un acompte de ${money(order.amount)} est convenu au titre de la réservation.`;
+  const sign = () => {
+    d.gap(6); d.p(`Fait à ${city || "…………"}, le ${fmtDate(x.date || c.created_at)}, en deux exemplaires originaux.`, { size: 10.5 });
+    d.signatures(roleA === "L’AGENCE / LE PROPRIÉTAIRE" ? "L’agence / le propriétaire" : roleA[0] + roleA.slice(1).toLowerCase(), roleB[0] + roleB.slice(1).toLowerCase());
+    d.p(DISCLAIMER, { size: 8.5, italic: true, color: [0.45, 0.5, 0.5], after: 0 });
+  };
+  const notes = () => { if (x.notes) d.clause(`Clauses particulières`, x.notes); };
+
+  if (c.kind === "location") {
+    d.clause("Article 1 — Objet", `Le bailleur donne en location au preneur, qui l’accepte, le bien suivant : ${bien}.`);
+    d.clause("Article 2 — Destination", "Le bien est loué à usage exclusif d’habitation. Toute activité commerciale ou professionnelle y est interdite sans accord écrit du bailleur.");
+    d.clause("Article 3 — Durée", `Le bail est conclu pour une durée de ${x.months} mois à compter du ${fmtDate(x.start) || "…………"}. Il peut être renouvelé par accord écrit des parties.`);
+    d.clause("Article 4 — Loyer et charges", `Le loyer mensuel est fixé à ${money(x.rent)}${x.charges ? `, auquel s’ajoutent ${money(x.charges)} de charges mensuelles` : ""}. Il est payable d’avance, au plus tard le ${x.payDay} de chaque mois, auprès de l’agence.`);
+    d.clause("Article 5 — Dépôt de garantie", `Le preneur verse un dépôt de garantie de ${money(x.deposit)}. Il est restitué dans un délai d’un mois après la remise des clés et l’état des lieux de sortie, déduction faite des sommes dues et des réparations locatives.`);
+    d.clause("Article 6 — Acompte de réservation", `${paid} Il est imputé sur les premières sommes dues au titre du présent bail.`);
+    d.clause("Article 7 — État des lieux", "Un état des lieux contradictoire est établi à l’entrée et à la sortie du preneur. À défaut, le bien est présumé remis en bon état d’usage.");
+    d.clause("Article 8 — Obligations du preneur", "Le preneur paie le loyer et les charges aux échéances, use paisiblement du bien, l’entretient et effectue les réparations locatives, s’assure contre les risques locatifs (incendie, dégâts des eaux) et ne sous-loue ni ne cède le bail sans accord écrit du bailleur.");
+    d.clause("Article 9 — Obligations du bailleur", "Le bailleur délivre un bien en bon état d’usage, en assure la jouissance paisible et réalise les grosses réparations, hors celles causées par le preneur.");
+    d.clause("Article 10 — Résiliation", `Chaque partie peut mettre fin au bail à l’échéance moyennant un préavis écrit de ${x.notice} mois. Le bail est résilié de plein droit, après mise en demeure restée sans effet pendant 15 jours, en cas de défaut de paiement du loyer ou de manquement grave aux obligations du preneur.`);
+    d.clause("Article 11 — Litiges", `Le présent contrat est soumis au droit applicable au lieu de situation du bien. À défaut d’accord amiable, les tribunaux compétents de ${city || "la juridiction du bien"} sont seuls compétents.`);
+    notes(); sign();
+  } else if (c.kind === "vente") {
+    const balance = Math.max(0, x.price - n(order.amount));
+    d.clause("Article 1 — Objet", `Le vendeur promet de vendre à l’acquéreur, qui promet d’acheter, le bien suivant : ${bien}, libre de toute occupation à la date de signature de l’acte authentique.`);
+    d.clause("Article 2 — Prix", `La vente est consentie au prix de ${money(x.price)}.`);
+    d.clause("Article 3 — Acompte", `${paid} Il s’impute sur le prix. Solde à payer : ${money(balance)}.`);
+    d.clause("Article 4 — Acte authentique", `Les parties s’engagent à signer l’acte de vente devant notaire${x.notary ? " (" + x.notary + ")" : ""} au plus tard le ${fmtDate(x.deadline) || "…………"}, contre paiement du solde du prix.`);
+    d.clause("Article 5 — Conditions suspensives", "La vente est subordonnée à : (a) la justification par le vendeur d’un titre de propriété régulier ; (b) l’absence d’hypothèque, de saisie ou de charge non déclarée ; (c) l’obtention des autorisations administratives éventuellement nécessaires.");
+    d.clause("Article 6 — Garanties du vendeur", "Le vendeur déclare être seul propriétaire du bien, le posséder librement et le garantir contre toute éviction et tout vice caché connu de lui.");
+    d.clause("Article 7 — Frais", x.buyerFees ? "Les droits d’enregistrement, les frais et honoraires du notaire sont à la charge de l’acquéreur." : "Les frais de l’acte sont répartis entre les parties conformément à la loi.");
+    if (x.commission) d.clause("Article 8 — Commission d’agence", `La commission de l’agence est fixée à ${money(x.commission)}, payable à la signature de l’acte authentique.`);
+    d.clause(`Article ${x.commission ? 9 : 8} — Défaillance`, `Si l’acquéreur renonce sans motif légitime ou ne paie pas le solde dans le délai, l’acompte reste acquis au vendeur. Si le vendeur renonce ou ne peut justifier de sa propriété, il restitue l’acompte${x.penalty ? ` et verse en outre ${money(x.penalty)} à titre d’indemnité` : ""}.`);
+    d.clause(`Article ${x.commission ? 10 : 9} — Litiges`, `En cas de litige, les parties recherchent une solution amiable ; à défaut, les tribunaux compétents de ${city || "la juridiction du bien"} sont seuls compétents.`);
+    notes(); sign();
   } else {
-    pdf.text("ENTRE LES SOUSSIGNÉS", { size: 10, bold: true, after: 4 });
-    p(`${partyLine(d, ag)}, ci-après « l’Agence »,`); p("d’une part, et");
-    p(`${clientLine(d, c)}, ci-après « le Client »,`); p("d’autre part, il a été convenu ce qui suit.");
-    art("Article 1 — Objet"); p(`L’Agence s’engage à réserver au profit du Client le bien suivant : ${propLine(pr, o)}${d.price ? `, au prix indicatif de ${money(d.price, cur)}` : ""}.`);
-    art("Article 2 — Durée de la réservation"); p(`La réservation est valable ${d.validity} jours à compter du ${fdate(d.date)}. Pendant cette période, le bien est retiré de l’offre et ne sera proposé à aucun tiers.`);
-    art("Article 3 — Acompte"); p(acompte || "Le Client verse un acompte de réservation dont le montant et le reçu sont mentionnés par l’Agence.");
-    art("Article 4 — Sort de l’acompte"); p(d.refundable
-      ? "L’acompte est intégralement remboursé si le dossier du Client est refusé ou si le bien devient indisponible. Si le contrat est conclu, il est imputé sur le premier loyer, le dépôt de garantie ou le prix. Si le Client se désiste sans motif légitime, l’Agence peut en conserver une partie à titre de dédommagement."
-      : "L’acompte est imputé sur le premier loyer, le dépôt de garantie ou le prix si le contrat est conclu. Il reste acquis à l’Agence si le Client se désiste sans motif légitime.");
-    art("Article 5 — Suite de l’opération"); p("À l’issue de la réservation, les parties concluent le contrat de bail ou la promesse de vente, ou constatent par écrit l’abandon du projet.");
+    d.clause("Article 1 — Objet", `Le présent contrat a pour objet la réservation du bien suivant : ${bien}${x.price ? `, au prix de ${money(x.price)}` : ""}.`);
+    d.clause("Article 2 — Acompte", `${paid} Moyen de paiement : ${METHOD_LABEL[order.payment_method] || "à préciser"}.`);
+    d.clause("Article 3 — Effets", `Pendant ${x.validity} jours à compter de la signature, le bien est retiré de la vente ou de la location au profit du client. À l’issue de ce délai, la réservation devient caduque si le contrat définitif (bail ou promesse de vente) n’est pas signé.`);
+    d.clause("Article 4 — Imputation", "En cas de signature du contrat définitif, l’acompte est imputé sur le prix, le loyer ou le dépôt de garantie.");
+    d.clause("Article 5 — Remboursement", x.refundable ? "L’acompte est intégralement remboursé si le dossier du client est refusé par le propriétaire ou si le bien n’est plus disponible. Il reste acquis à l’agence si le client se désiste sans motif légitime." : "L’acompte reste acquis à l’agence en cas de désistement du client. Il est remboursé si le propriétaire renonce ou si le bien n’est plus disponible.");
+    d.clause("Article 6 — Litiges", `Les parties recherchent une solution amiable ; à défaut, les tribunaux compétents de ${city || "la juridiction du bien"} sont seuls compétents.`);
+    notes(); sign();
   }
-  if (d.notes) { art("Clauses particulières"); p(d.notes); }
-  art("Droit applicable et litiges"); p("Le présent contrat est soumis à la législation applicable au lieu de situation du bien. Les parties s’efforcent de régler à l’amiable tout différend ; à défaut, les juridictions du lieu de situation du bien sont seules compétentes.");
-  pdf.gap(6);
-  const lt = kind === "location" ? ["Le Bailleur", bailleur] : kind === "vente" ? ["Le Vendeur", bailleur] : ["L’Agence", ag.name];
-  const rt = kind === "location" ? ["Le Locataire", c.name] : kind === "vente" ? ["L’Acquéreur", c.name] : ["Le Client", c.name];
-  pdf.signatures(lt, rt);
-  pdf.text("Modèle indicatif généré automatiquement : à faire relire par un notaire ou un juriste avant signature.", { size: 8, color: GREY, align: "center" });
-  return pdf.toBuffer({ title: `${KINDS[kind]} ${k.number}`, footer: `${ag.name} — ${k.number}` });
+  return d.build();
 }
 
-// ====================================================================================================
-// Accès aux données
-// ====================================================================================================
-let tableP;
-function ensureContracts() {
-  tableP ??= sql`CREATE TABLE IF NOT EXISTS contracts (id bigserial PRIMARY KEY, number text NOT NULL DEFAULT '', order_id bigint NOT NULL, customer_id bigint NOT NULL, kind text NOT NULL,
-    data text NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'issued', created_by bigint, created_at timestamptz NOT NULL DEFAULT now())`.then(() => true, () => { tableP = null; return false; });
-  return tableP;
-}
-function sendPdf(res, buf, name) {
+// ---------- Réponses HTTP ----------
+const pdf = (res, name, buf) => {
   res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^\w.\-]/g, "_")}"`);
+  res.setHeader("Content-Disposition", `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}.pdf"`);
   res.setHeader("Cache-Control", "private, no-store");
-  res.status(200).send(buf);
-}
-const same = (a, b) => String(a) === String(b);
+  return res.status(200).send(buf);
+};
+export const DOC_ACTIONS = new Set(["receipt", "contract", "mydocs", "contracts", "contract_create", "contract_void", "agency"]);
 
 export async function docsHandler(req, res) {
-  const a = req.query.a;
-  await ensureContracts();
+  await ensureDocs();
+  if (req.method !== "GET" && !sameOrigin(req)) return send(res, 403, { error: "Origine refusée" });
+  const a = req.query.a, u = await currentUser(req), c = u ? null : await currentCustomer(req);
+  if (!u && !c) return send(res, 401, { error: "Connexion requise" });
 
-  // ----- Espace client : mes reçus et mes contrats -----
-  if (a === "mydocs") {
-    const c = await requireCustomer(req, res);
-    if (!c) return;
-    const receipts = await sql`SELECT p.id::int AS id, p.order_id::int AS order_id, p.amount::float8 AS amount, p.currency, p.confirmed_at, o.property_title
-      FROM payments p LEFT JOIN orders o ON o.id = p.order_id WHERE p.customer_id = ${c.id} AND p.status = 'paid' ORDER BY p.confirmed_at DESC NULLS LAST LIMIT 100`;
-    const rows = await sql`SELECT k.id::int AS id, k.number, k.kind, k.created_at, o.property_title
-      FROM contracts k LEFT JOIN orders o ON o.id = k.order_id WHERE k.customer_id = ${c.id} AND k.status = 'issued' ORDER BY k.id DESC LIMIT 100`;
-    return send(res, 200, { receipts, contracts: rows.map((r) => ({ ...r, label: KINDS[r.kind] || r.kind })) });
-  }
-
-  // ----- Téléchargements (administrateur, ou client propriétaire du document) -----
-  if (a === "receipt" || a === "contract") {
+  if (a === "receipt") {
     const id = Number(req.query.id) || 0;
-    const admin = await currentUser(req), cust = admin ? null : await currentCustomer(req);
-    if (!admin && !cust) return send(res, 401, { error: "Non connecté" });
-    const ag = await loadAgency();
-    if (a === "receipt") {
-      const [p] = await sql`SELECT p.*, o.property_title, c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone, u.name AS confirmed_by_name
-        FROM payments p LEFT JOIN orders o ON o.id = p.order_id LEFT JOIN customers c ON c.id = p.customer_id LEFT JOIN users u ON u.id = p.confirmed_by WHERE p.id = ${id}`;
-      if (!p || p.status !== "paid" || (cust && !same(p.customer_id, cust.id))) return send(res, 404, { error: "Reçu introuvable." });
-      return sendPdf(res, buildReceipt(p, ag), `recu-${receiptNumber(p)}.pdf`);
-    }
-    const [k] = await sql`SELECT * FROM contracts WHERE id = ${id}`;
-    if (!k || (cust && (!same(k.customer_id, cust.id) || k.status !== "issued"))) return send(res, 404, { error: "Contrat introuvable." });
-    const [o] = await sql`SELECT * FROM orders WHERE id = ${k.order_id}`;
-    const [c] = await sql`SELECT name, email, phone FROM customers WHERE id = ${k.customer_id}`;
-    if (!o || !c) return send(res, 404, { error: "Contrat introuvable." });
-    const [pr] = o.property_id ? await sql`SELECT title, location, area, rooms, bedrooms, currency FROM properties WHERE id = ${o.property_id}` : [];
-    const [paid] = await sql`SELECT id, amount, currency, confirmed_at, created_at FROM payments WHERE order_id = ${k.order_id} AND status = 'paid' ORDER BY id DESC LIMIT 1`;
-    let data = {}; try { data = JSON.parse(k.data); } catch { /* contrat sans paramètres */ }
-    const buf = buildContract({ ...k, data: { ...cleanParams({}), ...data } }, o, c, pr, ag, paid);
-    return sendPdf(res, buf, `${k.number || "contrat-" + id}.pdf`);
+    const [p] = await sql`SELECT * FROM payments WHERE id = ${id} AND status = 'paid'`;
+    if (!p || (c && p.customer_id !== c.id)) return send(res, 404, { error: "Reçu introuvable" });
+    const [order] = await sql`SELECT * FROM orders WHERE id = ${p.order_id}`, [customer] = await sql`SELECT name, email, phone FROM customers WHERE id = ${p.customer_id}`;
+    const r = receiptPdf({ agency: await loadAgency(), p, order: order || {}, customer: customer || {} });
+    return pdf(res, "recu-" + r.number, r.buffer);
   }
 
-  // ----- Administration -----
-  const u = await requireUser(req, res, a === "contract_void" || a === "agency" ? (req.method === "GET" ? undefined : "super_admin") : undefined);
-  if (!u) return;
+  if (a === "contract") {
+    const id = Number(req.query.id) || 0;
+    const [k] = await sql`SELECT * FROM contracts WHERE id = ${id}`;
+    if (!k || (c && (k.customer_id !== c.id || k.status !== "issued"))) return send(res, 404, { error: "Contrat introuvable" });
+    const [order] = await sql`SELECT * FROM orders WHERE id = ${k.order_id}`, [customer] = await sql`SELECT name, email, phone FROM customers WHERE id = ${k.customer_id}`;
+    const [property] = order?.property_id ? await sql`SELECT title, location, kind_label, rooms, bedrooms, area, currency FROM properties WHERE id = ${order.property_id}` : [];
+    return pdf(res, k.number || "contrat-" + k.id, contractPdf({ agency: await loadAgency(), c: k, order: order || {}, customer: customer || {}, property }));
+  }
 
-  if (a === "contracts") {
-    const rows = await sql`SELECT k.id::int AS id, k.number, k.kind, k.status, k.created_at, c.name AS customer_name, o.property_title
-      FROM contracts k LEFT JOIN customers c ON c.id = k.customer_id LEFT JOIN orders o ON o.id = k.order_id ORDER BY k.id DESC LIMIT 300`;
-    const orders = await sql`SELECT o.id::int AS id, c.name AS customer_name, o.property_title, p.price::float8 AS price, p.operation
-      FROM orders o JOIN customers c ON c.id = o.customer_id LEFT JOIN properties p ON p.id = o.property_id WHERE o.status = 'confirmed' ORDER BY o.created_at DESC LIMIT 200`;
+  if (a === "mydocs") {
+    if (!c) return send(res, 403, { error: "Réservé aux clients" });
+    const receipts = await sql`SELECT p.id, p.order_id, p.method, p.amount, p.currency, p.confirmed_at, o.property_title FROM payments p LEFT JOIN orders o ON o.id = p.order_id WHERE p.customer_id = ${c.id} AND p.status = 'paid' ORDER BY p.confirmed_at DESC LIMIT 50`;
+    const contracts = await sql`SELECT k.id, k.number, k.kind, k.created_at, o.property_title FROM contracts k LEFT JOIN orders o ON o.id = k.order_id WHERE k.customer_id = ${c.id} AND k.status = 'issued' ORDER BY k.id DESC LIMIT 50`;
+    return send(res, 200, { receipts, contracts: contracts.map((k) => ({ ...k, label: KINDS[k.kind] || k.kind })) });
+  }
+
+  // Les actions suivantes sont réservées aux administrateurs.
+  if (!u) return send(res, 403, { error: "Accès refusé" });
+  const sup = u.role === "super_admin";
+
+  if (a === "contracts" && req.method === "GET") {
+    const rows = await sql`SELECT k.id, k.number, k.kind, k.status, k.created_at, k.order_id, o.property_title, c.name AS customer_name, c.email AS customer_email
+      FROM contracts k LEFT JOIN orders o ON o.id = k.order_id LEFT JOIN customers c ON c.id = k.customer_id ORDER BY k.id DESC LIMIT 200`;
+    const orders = await sql`SELECT o.id, o.property_title, o.amount, o.currency, o.payment_status, o.status, o.property_id, c.name AS customer_name, p.price, p.operation
+      FROM orders o JOIN customers c ON c.id = o.customer_id LEFT JOIN properties p ON p.id = o.property_id WHERE o.status = 'confirmed' ORDER BY o.id DESC LIMIT 200`;
     return send(res, 200, { rows: rows.map((r) => ({ ...r, label: KINDS[r.kind] || r.kind })), orders, kinds: KINDS, agency: await loadAgency() });
   }
 
-  if (a === "agency") {
-    if (req.method === "GET") return send(res, 200, await loadAgency());
-    if (req.method !== "POST" || !sameOrigin(req)) return send(res, 405, { error: "Méthode refusée" });
-    const b = req.body || {}, out = {};
-    for (const k of AGENCY_KEYS) out[k] = str(b[k], 160);
-    if (!out.name) return send(res, 400, { error: "Le nom commercial est obligatoire." });
-    await sql`INSERT INTO payment_settings (key, value, updated_by, updated_at) VALUES ('agency', ${JSON.stringify(out)}, ${u.id}, now())
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`;
-    await audit(u.id, "agency.update", out.name);
-    return send(res, 200, { ok: true });
+  if (a === "agency" && req.method === "POST") {
+    if (!sup) return send(res, 403, { error: "Réservé au super administrateur" });
+    const ag = await saveAgency(req.body, u.id);
+    await audit(u.id, "agency.update", ag.name);
+    return send(res, 200, { agency: ag });
   }
 
-  if (a === "contract_create") {
-    if (req.method !== "POST" || !sameOrigin(req)) return send(res, 405, { error: "Méthode refusée" });
-    const b = req.body || {}, kind = String(b.kind || ""), orderId = Number(b.orderId) || 0;
+  if (a === "contract_create" && req.method === "POST") {
+    const b = req.body || {}, kind = String(b.kind || "");
     if (!Object.hasOwn(KINDS, kind)) return send(res, 400, { error: "Type de contrat inconnu." });
-    const [o] = await sql`SELECT id, customer_id, property_title FROM orders WHERE id = ${orderId} AND status = 'confirmed'`;
-    if (!o) return send(res, 400, { error: "Choisissez une demande acceptée." });
-    const [row] = await sql`INSERT INTO contracts (order_id, customer_id, kind, data, created_by) VALUES (${o.id}, ${o.customer_id}, ${kind}, ${JSON.stringify(cleanParams(b.params || {}))}, ${u.id}) RETURNING id`;
-    const id = Number(row.id), number = `${PREFIX[kind]}-${new Date().getUTCFullYear()}-${String(id).padStart(5, "0")}`;
-    await sql`UPDATE contracts SET number = ${number} WHERE id = ${id}`;
-    await audit(u.id, "contract.create", number);
-    await notifyCustomer(o.customer_id, `Votre document « ${KINDS[kind]} » pour « ${o.property_title} » est disponible dans « Mon compte ».`);
-    return send(res, 201, { ok: true, id, number });
+    const [o] = await sql`SELECT id, customer_id, property_title, status FROM orders WHERE id = ${Number(b.orderId) || 0}`;
+    if (!o || o.status !== "confirmed") return send(res, 400, { error: "Choisissez une demande acceptée." });
+    let params; try { params = normalizeParams(kind, b.params); } catch (e) { return send(res, 400, { error: e.message }); }
+    if (kind === "location" && !params.rent) return send(res, 400, { error: "Indiquez le loyer mensuel." });
+    if (kind === "vente" && !params.price) return send(res, 400, { error: "Indiquez le prix de vente." });
+    const [k] = await sql`INSERT INTO contracts (order_id, customer_id, kind, data, created_by) VALUES (${o.id}, ${o.customer_id}, ${kind}, ${JSON.stringify(params)}, ${u.id}) RETURNING id, created_at`;
+    const number = `CTR-${new Date(k.created_at).getFullYear()}-${String(k.id).padStart(5, "0")}`;
+    await sql`UPDATE contracts SET number = ${number} WHERE id = ${k.id}`;
+    await audit(u.id, "contract.create", `${number} (${kind})`);
+    await notifyCustomer(o.customer_id, `Votre ${KINDS[kind].toLowerCase()} pour « ${o.property_title} » est disponible dans « Mes demandes › Documents ».`);
+    return send(res, 200, { id: k.id, number });
   }
 
-  if (a === "contract_void") {
-    if (req.method !== "POST" || !sameOrigin(req)) return send(res, 405, { error: "Méthode refusée" });
-    const id = Number(req.body?.id) || 0;
-    const [k] = await sql`UPDATE contracts SET status = 'void' WHERE id = ${id} AND status = 'issued' RETURNING number`;
-    if (!k) return send(res, 404, { error: "Contrat introuvable ou déjà annulé." });
+  if (a === "contract_void" && req.method === "POST") {
+    if (!sup) return send(res, 403, { error: "Réservé au super administrateur" });
+    const [k] = await sql`UPDATE contracts SET status = 'void' WHERE id = ${Number(req.body?.id) || 0} AND status = 'issued' RETURNING number`;
+    if (!k) return send(res, 404, { error: "Contrat introuvable" });
     await audit(u.id, "contract.void", k.number);
     return send(res, 200, { ok: true });
   }

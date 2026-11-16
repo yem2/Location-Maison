@@ -169,9 +169,8 @@ export async function visitsHandler(req, res) {
     const pid = str(b.propertyId, 80), date = String(b.date || ""), time = String(b.time || "");
     const pb = slotProblem(date, time, now);
     if (pb) return send(res, 400, { error: pb });
-    const [p] = await sql`SELECT id, title, published, availability FROM properties WHERE id = ${pid}`;
+    const [p] = await sql`SELECT id, title, published FROM properties WHERE id = ${pid}`;
     if (!p || !p.published) return send(res, 404, { error: "Ce bien n’est plus disponible." });
-    if ((p.availability || "available") !== "available") return send(res, 409, { error: p.availability === "rented" ? "Ce bien est déjà loué : visite impossible." : p.availability === "sold" ? "Ce bien est déjà vendu : visite impossible." : "Ce bien n’est plus disponible : visite impossible." });
     const [cnt] = await sql`SELECT count(*)::int AS n FROM visits WHERE customer_id = ${c.id} AND status IN ('requested','confirmed') AND visit_date >= ${now.date}::date`;
     if (cnt.n >= MAX_ACTIVE) return send(res, 409, { error: `Vous avez déjà ${MAX_ACTIVE} visites à venir. Annulez-en une pour en demander une autre.` });
     const [clash] = await sql`SELECT 1 FROM visits WHERE customer_id = ${c.id} AND visit_date = ${date}::date AND visit_time = ${time} AND status IN ('requested','confirmed')`;
