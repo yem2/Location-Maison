@@ -182,3 +182,18 @@ a { color: var(--g); }
 /* iPhone / iPad : une saisie sous 16 px fait zoomer la page au toucher, on l'évite */
 input, select, textarea { font-size: 16px; }
 button, a, .chip, .pm, .nav button, .tabbar button { touch-action: manipulation; }
+
+/* ---- Barre du bas : s'adapte à n'importe quel nombre d'onglets (6, 7, 8…) sans retour à la ligne ni défilement ---- */
+@media (max-width: 1023px) {
+  .tabbar { display: flex; flex-wrap: nowrap; justify-content: space-between; overflow: hidden; }
+  .tabbar button { flex: 1 1 0; min-width: 0; padding-left: 0; padding-right: 0; font-size: clamp(.54rem, 2.5vw, .68rem); }
+  .tabbar button span, .tabbar button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+  .tabbar svg { width: clamp(19px, 5.6vw, 22px); height: clamp(19px, 5.6vw, 22px); flex: none; }
+}
+/* Filet de sécurité : une icône dans un bouton ou un lien ne devient jamais géante, quel que soit le style de sa barre */
+button svg, a svg { width: 1.25em; height: 1.25em; flex: none; max-width: 100%; }
+/* Pastilles : accrochées au bord droit de l'onglet, elles ne sont jamais coupées */
+@media (max-width: 1023px) {
+  .tabbar .badge { left: auto; right: 2px; top: 3px; }
+  .tabbar button { font-size: clamp(.5rem, 2.3vw, .68rem); }
+}

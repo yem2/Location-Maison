@@ -96,3 +96,6 @@ input[type="range"] { margin: 0; }
   input, select, textarea { font-size: 16px !important; }
 }
 button, a, select, label { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+
+/* Filet de sécurité : une icône dans un bouton ou un lien ne devient jamais géante */
+button svg, a svg { max-width: 100%; }
