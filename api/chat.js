@@ -18,9 +18,6 @@ async function handler(req, res) {
     const sup = me.role === "super_admin";
     if (a === "admin_threads") {
       return send(res, 200, await sql`SELECT t.id, t.kind, t.last_message_at, ca.name AS a_name, ca.email AS a_email, cb.name AS b_name,
-        EXISTS (SELECT 1 FROM orders o JOIN properties p ON p.id = o.property_id WHERE o.customer_id = t.customer_a AND o.status = 'confirmed' AND p.operation = 'rent') AS is_tenant,
-        EXISTS (SELECT 1 FROM orders o JOIN properties p ON p.id = o.property_id WHERE o.customer_id = t.customer_a AND o.status = 'confirmed' AND p.operation = 'sale') AS is_buyer,
-        EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = t.customer_a AND o.status = 'pending') AS has_pending,
         (SELECT body FROM chat_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body,
         (SELECT count(*)::int FROM chat_messages m WHERE m.thread_id = t.id AND m.sender_type = 'customer' AND m.id > t.admin_read_id AND t.kind = 'support') AS unread
         FROM chat_threads t JOIN customers ca ON ca.id = t.customer_a LEFT JOIN customers cb ON cb.id = t.customer_b
@@ -64,7 +61,7 @@ async function handler(req, res) {
   if (a === "threads") {
     await supportThread(c.id);
     return send(res, 200, await sql`SELECT t.id, t.kind, t.last_message_at,
-      CASE WHEN t.kind = 'support' THEN 'Support Maison' ELSE o.name END AS title,
+      CASE WHEN t.kind = 'support' THEN 'Support' ELSE o.name END AS title,
       (SELECT body FROM chat_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_body,
       (SELECT count(*)::int FROM chat_messages m WHERE m.thread_id = t.id AND NOT (m.sender_type = 'customer' AND m.sender_customer_id = ${c.id})
         AND m.id > CASE WHEN t.customer_a = ${c.id} THEN t.a_read_id ELSE t.b_read_id END) AS unread
@@ -98,22 +95,22 @@ async function handler(req, res) {
       else await sql`UPDATE chat_threads SET b_read_id = GREATEST(b_read_id, ${last}) WHERE id = ${tid}`;
     }
     return send(res, 200, rows.map((m) => ({ id: m.id, mine: m.sender_type === "customer" && m.sender_customer_id === c.id,
-      who: m.sender_type === "admin" ? "Support Maison" : m.cname || "Client", body: m.body, created_at: m.created_at })));
+      who: m.sender_type === "admin" ? "Support" : m.cname || "Client", body: m.body, created_at: m.created_at })));
   }
 
   if (a === "send" && req.method === "POST") {
     if (!(await throttle(req, res, "chat", 40, 60))) return;
     const body = str(req.body?.body, 2000);
     if (!body) return send(res, 400, { error: "Message vide." });
-    // Notifier seulement si le destinataire n'a pas déjà des messages non lus (évite le spam)
+    // Notification dans l'application : une seule tant que des messages restent non lus (évite le spam) ; WhatsApp : chaque message
     let notify;
     if (t.kind === "support") {
       const [{ n }] = await sql`SELECT count(*)::int AS n FROM chat_messages WHERE thread_id = ${tid} AND sender_type = 'customer' AND id > ${t.admin_read_id}`;
-      notify = n === 0 ? () => notifyAdmins("chat", "Nouveau message d’un client", `${c.name} : ${snippet(body)}`, c.id) : null;
+      notify = () => notifyAdmins("chat", "Nouveau message d’un client", `${c.name} : ${snippet(body)}`, c.id, { inApp: n === 0 });
     } else {
       const other = mineCol ? t.customer_b : t.customer_a, otherRead = mineCol ? t.b_read_id : t.a_read_id;
       const [{ n }] = await sql`SELECT count(*)::int AS n FROM chat_messages WHERE thread_id = ${tid} AND sender_customer_id = ${c.id} AND id > ${otherRead}`;
-      notify = n === 0 ? () => notifyCustomer(other, `Nouveau message de ${c.name} : ${snippet(body)}`) : null;
+      notify = () => notifyCustomer(other, `Nouveau message de ${c.name} : ${snippet(body)}`, { inApp: n === 0 });
     }
     await sql`INSERT INTO chat_messages (thread_id, sender_type, sender_customer_id, body) VALUES (${tid}, 'customer', ${c.id}, ${body})`;
     await sql`UPDATE chat_threads SET last_message_at = now() WHERE id = ${tid}`;

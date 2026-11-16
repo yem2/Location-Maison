@@ -1,4 +1,4 @@
-import { sql, send, requireUser, audit, str, notifyCustomer, ensureSchema, wrap } from "./_lib.js";
+import { sql, send, requireUser, audit, str, notifyCustomer, ensureSchema, ensureOpsSchema, wrap } from "./_lib.js";
 
 const toFront = (r) => ({
   id: r.id, title: r.title, location: r.location, price: Number(r.price), currency: r.currency,
@@ -21,7 +21,7 @@ function clean(b) {
     rooms: num(b.rooms, 99), bedrooms: num(b.bedrooms, 99), bathrooms: num(b.bathrooms, 99), area: num(b.area, 100000),
     description: str(b.description, 2000),
     features: (Array.isArray(b.features) ? b.features : []).map((f) => str(f, 60)).filter(Boolean).slice(0, 12),
-    availability: ["available", "reserved", "unavailable"].includes(b.availability) ? b.availability : "available", isNew: !!b.isNew, isExclusive: !!b.isExclusive, published: b.published !== false, position: num(b.order, 9999), deposit: num(b.deposit)
+    availability: ["available", "reserved", "unavailable", "rented", "sold"].includes(b.availability) ? b.availability : "available", isNew: !!b.isNew, isExclusive: !!b.isExclusive, published: b.published !== false, position: num(b.order, 9999), deposit: num(b.deposit)
   };
   p.label = p.operation === "rent" ? "À louer" : "À vendre";
   p.priceSuffix = p.operation === "rent" ? " / mois" : "";
@@ -34,20 +34,25 @@ async function handler(req, res) {
   if (req.method === "GET") {
     const all = req.query.all === "1" && (await requireUser(req, res));
     if (req.query.all === "1" && !all) return;
-    if (all) { await ensureSchema(); res.setHeader("Cache-Control", "private, no-store"); }
+    if (all) await ensureSchema();
     const rows = all
       ? await sql`SELECT * FROM properties ORDER BY position, created_at`
       : await sql`SELECT * FROM properties WHERE published ORDER BY position, created_at`;
-    if (!all) res.setHeader("Cache-Control", "public, s-maxage=30, stale-while-revalidate=120");
+    res.setHeader("Cache-Control", all ? "private, no-store" : "public, s-maxage=30, stale-while-revalidate=120");
     return send(res, 200, rows.map(toFront));
   }
   const user = await requireUser(req, res);
   if (!user) return;
 
   if (req.method === "DELETE") {
+    if (user.role !== "super_admin") return send(res, 403, { error: "La suppression définitive est réservée au super administrateur." });
+    if (!(await ensureSchema())) return send(res, 500, { error: "Archivage indisponible : exécutez migration-superadmin.sql dans Neon." });
     const id = str(req.query.id, 80);
-    await sql`UPDATE properties SET archived = true, archived_at = now(), published = false, updated_at = now() WHERE id = ${id}`;
-    await audit(user.id, "property.archive", id);
+    const [x] = await sql`SELECT archived FROM properties WHERE id = ${id}`;
+    if (!x) return send(res, 404, { error: "Annonce introuvable." });
+    if (!x.archived) return send(res, 409, { error: "Mettez d’abord l’annonce dans les archives, puis supprimez-la définitivement." });
+    await sql`DELETE FROM properties WHERE id = ${id}`;
+    await audit(user.id, "property.delete", id);
     return send(res, 200, { ok: true });
   }
   // Archiver / restaurer : l'annonce disparaît du site public mais reste en base (réversible)
@@ -66,6 +71,7 @@ async function handler(req, res) {
   const { p, error } = clean(req.body || {});
   if (error) return send(res, 400, { error });
   const f = JSON.stringify(p.features);
+  await ensureOpsSchema(); // autorise les états « loué » et « vendu » en base
   if (req.method === "POST") {
     let id = slug(p.title) || "bien", n = 1;
     while ((await sql`SELECT 1 FROM properties WHERE id = ${id}`).length) id = `${slug(p.title)}-${++n}`;
@@ -80,7 +86,10 @@ async function handler(req, res) {
   const published = p.published && !(old && old.archived); // une annonce archivée ne peut pas être republiée sans restauration
   await sql`UPDATE properties SET title=${p.title},location=${p.location},price=${p.price},currency=${p.currency},currency_symbol=${p.currencySymbol},operation=${p.operation},kind=${p.kind},kind_label=${p.kindLabel},image=${p.image},alt=${p.alt},rooms=${p.rooms},bedrooms=${p.bedrooms},bathrooms=${p.bathrooms},area=${p.area},description=${p.description},features=${f}::jsonb,label=${p.label},price_suffix=${p.priceSuffix},is_new=${p.isNew},is_exclusive=${p.isExclusive},position=${p.position},published=${published},availability=${p.availability},deposit=${p.deposit},updated_at=now() WHERE id=${id}`;
   if (old && old.availability === "available" && p.availability !== "available") {
-    const waiting = await sql`SELECT DISTINCT customer_id FROM orders WHERE property_id = ${id} AND status = 'pending'`;
+    // Loué / vendu : les demandes en attente sont refusées automatiquement
+    const waiting = ["rented", "sold"].includes(p.availability)
+      ? await sql`UPDATE orders SET status = 'rejected', updated_at = now() WHERE property_id = ${id} AND status = 'pending' RETURNING customer_id`
+      : await sql`SELECT DISTINCT customer_id FROM orders WHERE property_id = ${id} AND status = 'pending'`;
     for (const r of waiting) await notifyCustomer(r.customer_id, `Le bien « ${p.title} » n’est plus disponible.`);
   }
   await audit(user.id, "property.update", id);

@@ -37,7 +37,8 @@
 
     const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 
-    const AV = { available: "Disponible", reserved: "Réservé", unavailable: "Indisponible" };
+    const AV = { available: "Disponible", reserved: "Réservé", unavailable: "Indisponible", rented: "Loué", sold: "Vendu" };
+    const AV_BTN = { rented: "Déjà loué", sold: "Déjà vendu" };
     const avOf = (p) => (AV[p.availability] ? p.availability : "available");
     const availPill = (p) => `<span class="avail avail-${avOf(p)}">${AV[avOf(p)]}</span>`;
 
@@ -103,7 +104,7 @@
         : `${results.length} ${noun}`;
 
       grid.innerHTML = results.map((property) => `
-        <article class="property-card col">
+        <article class="property-card col${avOf(property) === "available" ? "" : " is-off"}"${avOf(property) === "available" ? "" : ` aria-label="${esc(property.title)} : ${AV[avOf(property)].toLowerCase()}"`}>
           <div class="property-image">
             <img src="${esc(property.image)}" alt="${esc(property.alt)}" width="1400" height="933" loading="lazy" decoding="async">
             <span class="property-badge">${esc(property.label)}</span>
@@ -187,7 +188,7 @@
             <button class="outline-button share-property" type="button" data-share="${esc(property.id)}">Partager ce bien <span aria-hidden="true">↗</span></button>
             <p class="share-feedback" role="status" hidden></p>
           </div>
-          <button class="search-button dialog-order" type="button" data-order="${esc(property.id)}"${avOf(property) === "available" ? "" : " disabled"}>${avOf(property) === "available" ? "Réserver ce bien" : "Bien indisponible"}</button>
+          <button class="search-button dialog-order" type="button" data-order="${esc(property.id)}"${avOf(property) === "available" ? "" : " disabled"}>${avOf(property) === "available" ? "Réserver ce bien" : (AV_BTN[avOf(property)] || "Bien indisponible")}</button>
           <button class="search-button dialog-contact" type="button" data-inquire="${esc(property.id)}">Demander des informations <span aria-hidden="true">↗</span></button>
         </div>
       `;
