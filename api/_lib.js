@@ -133,7 +133,6 @@ export async function findReset(kind, token) {
   return r || null;
 }
 export const burnResets = (kind, accountId) => sql`UPDATE password_resets SET used_at = now() WHERE kind = ${kind} AND account_id = ${accountId} AND used_at IS NULL`;
---- DÉBUT DU CODE À AJOUTER ---
 
 // Points d'entrée communs utilisés par les API administrateur et client.
 export async function requestReset(req, res, kind) {
@@ -246,9 +245,6 @@ export async function applyReset(req, res) {
     message: "Mot de passe réinitialisé. Vous pouvez vous connecter."
   });
 }
-
---- FIN DU CODE À AJOUTER ---
-
 
 // Protection CSRF : requête same-origin uniquement pour les écritures
 export function sameOrigin(req) {
