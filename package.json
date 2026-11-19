@@ -7,5 +7,10 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0"
+  },
+  "scripts": {
+    "env:sync": "node scripts/sync-env.mjs",
+    "env:watch": "node scripts/sync-env.mjs --watch 15",
+    "env:check": "node scripts/sync-env.mjs --check"
   }
 }

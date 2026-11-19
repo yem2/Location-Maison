@@ -123,5 +123,22 @@
       "path": "/api/monitor?a=cron",
       "schedule": "0 5 * * *"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/scripts/(.*)",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/(\\.env.*)",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/(\\.git.*)",
+      "destination": "/",
+      "permanent": false
+    }
   ]
 }

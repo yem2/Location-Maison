@@ -2,6 +2,7 @@
   "use strict";
   const app = document.getElementById("app");
   const NS = "http://www.w3.org/2000/svg";
+  const BUILD = "2026-11-17-a";
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const NAV = [
     ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["favoris", "Favoris", "Favoris", "heart"],
@@ -121,7 +122,7 @@
     app.replaceChildren(
       h("aside", { class: "side" }, brand(), h("nav", { class: "nav", "aria-label": "Tableau de bord" }, navBtns(false)),
         h("div", { class: "side-user" }, h("div", { class: "su-id" }, avatarEl(me), h("div", {}, h("strong", {}, me.name))), h("small", { class: "muted su-mail" }, me.email),
-          h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"))),
+          h("a", { class: "btn ghost sm", href: "/" }, "Voir le site"), h("button", { class: "btn ghost sm", type: "button", onclick: logout }, "Se déconnecter"), h("small", { class: "muted" }, "Version " + BUILD))),
       h("div", { class: "main" },
         h("header", { class: "bar" }, brand(), h("h1", {}, title), h("a", { class: "btn ghost sm", href: "/" }, "Voir le site")), content),
       h("nav", { class: "tabbar", "aria-label": "Navigation mobile" }, navBtns(true)));

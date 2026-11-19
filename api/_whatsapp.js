@@ -4,7 +4,7 @@ import { send, audit, normalizePhone } from "./_lib.js";
 // GREEN_API_ID, GREEN_API_TOKEN, GREEN_API_URL (ex. https://7107.api.greenapi.com)
 export const greenOn = () => !!(process.env.GREEN_API_ID && process.env.GREEN_API_TOKEN);
 
-async function call(path, { method = "GET", body, timeout = 8000 } = {}) {
+async function call(path, { method = "GET", body, timeout = 4000 } = {}) {
   const base = String(process.env.GREEN_API_URL || "https://api.green-api.com").replace(/\/+$/, "");
   const id = encodeURIComponent(process.env.GREEN_API_ID), tok = encodeURIComponent(process.env.GREEN_API_TOKEN);
   const ctrl = new AbortController();
@@ -37,7 +37,7 @@ export async function waHandler(req, res, me) {
   if (!greenOn()) return send(res, 200, { configured: false, meta: !!process.env.WA_ACCESS_TOKEN });
   try {
     if (a === "status") {
-      const r = await call("getStateInstance");
+      const r = await call("getStateInstance", { timeout: 3000 });
       if (!r.ok) return send(res, 200, { configured: true, state: "unreachable" });
       const state = STATE[r.json?.stateInstance] || "stopped";
       let number = "";

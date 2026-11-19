@@ -622,6 +622,7 @@
   }
 
   // ----- Navigation regroupée : 8 modules au lieu de 14, sous-onglets à l'intérieur -----
+  const BUILD = "2026-11-17-a";
   const GROUPS = [
     { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: "▦", tabs: [["dashboard", "Tableau de bord"]] },
     { id: "annonces", label: "Annonces", icon: "⌂", tabs: [["annonces", "Annonces"]], also: ["form"] },
@@ -651,14 +652,16 @@
 
     const nav = h("aside", { class: "side" }, h("div", { class: "brand" }, h("i", {}, "M"), h("span", { class: "brand-t" }, "Gestion immobilière", h("small", {}, "Administration"))));
     for (const g of groups) nav.append(h("button", { class: "nav" + (g === cur ? " on" : ""), onclick: () => open(g) }, h("span", {}, g.label), badge(gcount(g))));
-    nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur")))));
+    nav.append(h("div", { class: "who" }, h("div", { class: "who-id" }, avatarEl(me), h("div", {}, h("b", {}, me.name || me.email), presenceBadge(), h("span", { class: "who-role" }, sup ? "Super administrateur" : "Administrateur"))), h("small", { class: "muted" }, "Version " + BUILD)));
 
     const ctx = { me, api, h, when };
-    const body = tab === "form" ? propForm(window._edit) : tab === "archives" && sup ? window.AdminArch.view(ctx) : tab === "payments" ? window.AdminPay.transactions(ctx) : tab === "contracts" ? window.AdminDocs.view(ctx) : tab === "paysettings" && sup ? window.AdminPay.settings(ctx)
+    let body;
+    try { body = tab === "form" ? propForm(window._edit) : tab === "archives" && sup ? window.AdminArch.view(ctx) : tab === "payments" ? window.AdminPay.transactions(ctx) : tab === "contracts" ? window.AdminDocs.view(ctx) : tab === "paysettings" && sup ? window.AdminPay.settings(ctx)
       : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
       : tab === "chat" ? chatView() : tab === "whatsapp" && sup ? window.AdminWhatsApp.view(ctx) : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()
       : tab === "annonces" ? listView() : dashboardView();
+    } catch (e) { body = h("div", { class: "card" }, h("p", { class: "err" }, e.message || "Erreur de chargement"), h("button", { onclick: () => render() }, "Réessayer")); }
     const title = tab === "form" ? "Annonce" : cur.tabs.length > 1 ? cur.label : cur.tabs[0][1];
     const subtabs = cur.tabs.length > 1 && tab !== "form" ? h("div", { class: "subtabs", role: "tablist" }, cur.tabs.map(([id, label, cnt]) =>
       h("button", { type: "button", role: "tab", "aria-selected": id === tab ? "true" : "false", class: "stab" + (id === tab ? " on" : ""), onclick: () => { tab = id; window._cust = null; render(); } }, label, badge(cnt ? Number(counts[cnt]) || 0 : 0)))) : "";

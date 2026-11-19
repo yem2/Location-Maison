@@ -150,13 +150,13 @@ export const DOC_ACTIONS = new Set(["receipt", "contract", "mydocs", "contracts"
 export async function docsHandler(req, res) {
   await ensureDocs();
   if (req.method !== "GET" && !sameOrigin(req)) return send(res, 403, { error: "Origine refusée" });
-  const a = req.query.a, u = await currentUser(req), c = u ? null : await currentCustomer(req);
+  const a = req.query.a, u = await currentUser(req), c = await currentCustomer(req); // les deux sessions peuvent coexister
   if (!u && !c) return send(res, 401, { error: "Connexion requise" });
 
   if (a === "receipt") {
     const id = Number(req.query.id) || 0;
     const [p] = await sql`SELECT * FROM payments WHERE id = ${id} AND status = 'paid'`;
-    if (!p || (c && p.customer_id !== c.id)) return send(res, 404, { error: "Reçu introuvable" });
+    if (!p || !(u || (c && p.customer_id === c.id))) return send(res, 404, { error: "Reçu introuvable" });
     const [order] = await sql`SELECT * FROM orders WHERE id = ${p.order_id}`, [customer] = await sql`SELECT name, email, phone FROM customers WHERE id = ${p.customer_id}`;
     const r = receiptPdf({ agency: await loadAgency(), p, order: order || {}, customer: customer || {} });
     return pdf(res, "recu-" + r.number, r.buffer);
@@ -165,7 +165,7 @@ export async function docsHandler(req, res) {
   if (a === "contract") {
     const id = Number(req.query.id) || 0;
     const [k] = await sql`SELECT * FROM contracts WHERE id = ${id}`;
-    if (!k || (c && (k.customer_id !== c.id || k.status !== "issued"))) return send(res, 404, { error: "Contrat introuvable" });
+    if (!k || !(u || (c && k.customer_id === c.id && k.status === "issued"))) return send(res, 404, { error: "Contrat introuvable" });
     const [order] = await sql`SELECT * FROM orders WHERE id = ${k.order_id}`, [customer] = await sql`SELECT name, email, phone FROM customers WHERE id = ${k.customer_id}`;
     const [property] = order?.property_id ? await sql`SELECT title, location, kind_label, rooms, bedrooms, area, currency FROM properties WHERE id = ${order.property_id}` : [];
     return pdf(res, k.number || "contrat-" + k.id, contractPdf({ agency: await loadAgency(), c: k, order: order || {}, customer: customer || {}, property }));
