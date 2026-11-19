@@ -1,6 +1,6 @@
 // Service worker de Maison : installation de l'application + page hors ligne.
 // Les appels /api, l'espace client (/compte) et l'administration ne sont jamais mis en cache.
-const VERSION = "maison-v5";
+const VERSION = "gestion-v2"; // changer ce numéro force la mise à jour du cache chez tous les visiteurs
 const SHELL = ["/offline.html", "/assets/favicon.svg", "/assets/icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -12,7 +12,7 @@ self.addEventListener("activate", (e) => {
 
 async function networkFirst(req) {
   try {
-    const r = await fetch(req);
+    const r = await fetch(req, { cache: "no-cache" }); // toujours revalider : jamais de CSS/JS périmé
     if (r && r.ok) { const c = await caches.open(VERSION); c.put(req, r.clone()); }
     return r;
   } catch (e) {

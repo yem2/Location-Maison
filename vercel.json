@@ -1,4 +1,7 @@
 {
+  "regions": [
+    "iad1"
+  ],
   "rewrites": [
     {
       "source": "/acheter",
@@ -27,10 +30,6 @@
     {
       "source": "/compte",
       "destination": "/html/compte.html"
-    },
-    {
-      "source": "/reinitialiser",
-      "destination": "/html/reinitialiser.html"
     }
   ],
   "headers": [
@@ -94,11 +93,11 @@
       ]
     },
     {
-      "source": "/api/((?!image|properties).*)",
+      "source": "/assets/(.*)",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-store"
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
         }
       ]
     },
@@ -108,6 +107,15 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/api/((?!image|properties).*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
         }
       ]
     }
@@ -122,21 +130,31 @@
     {
       "path": "/api/monitor?a=cron",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/orders?a=visit_reminders",
+      "schedule": "0 6 * * *"
     }
   ],
+  "ignoreCommand": "node scripts/check-deploy.mjs",
   "redirects": [
     {
+      "source": "/(.*)\\.(md|sql|sh)",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/(package|vercel)\\.json",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/serveur/(.*)",
+      "destination": "/",
+      "permanent": false
+    },
+    {
       "source": "/scripts/(.*)",
-      "destination": "/",
-      "permanent": false
-    },
-    {
-      "source": "/(\\.env.*)",
-      "destination": "/",
-      "permanent": false
-    },
-    {
-      "source": "/(\\.git.*)",
       "destination": "/",
       "permanent": false
     }
