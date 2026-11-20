@@ -55,3 +55,8 @@ Le fichier `netlify.toml` configure déjà Netlify pour publier la racine du dé
 - **Documents PDF** : reçus de paiement et contrats (location, vente, réservation) — onglet **Contrats & reçus** ; le client les télécharge dans « Mes demandes ».
 - **Archives** : toute suppression est récupérable (onglet **Archives**, super administrateur).
 - Détail des routes : voir `API.md`. Tables : `migration-paiements-documents.sql` (facultatif, créées automatiquement sinon).
+
+## Visites et loyers mensuels
+- **Visites** : le client choisit un bien, une date et un créneau libre (depuis « Planifier une visite » sur la fiche du bien, ou l'onglet Visites). L'agence confirme dans **Demandes & paiements › Visites** ; le client peut ajouter la visite à son calendrier. Un créneau ne peut pas être réservé deux fois.
+- **Loyers** : **Demandes & paiements › Loyers** → « Nouveau bail » crée l'échéancier (12 mois puis ajout automatique chaque mois). Le locataire voit ses échéances dans **Loyers**, déclare son paiement (Orange/MTN/virement/espèces) ; l'agence confirme et la **quittance PDF** est générée.
+- **Rappels automatiques** (notification + WhatsApp si activé) : visites la veille et le jour même ; loyers 3 jours avant, le jour J, puis tous les 3 jours de retard. Ils partent par une tâche planifiée Vercel à 06:00 UTC : **ajoutez la variable `CRON_SECRET`** (une longue valeur aléatoire) dans Vercel, sinon la tâche est refusée.

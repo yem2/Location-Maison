@@ -36,7 +36,7 @@ export async function saveAgency(input, userId) {
   return a;
 }
 
-function letterhead(agency, title, number) {
+export function letterhead(agency, title, number) {
   return (d) => {
     d.rect(0, 841.89 - 70, 595.28, 70, [0.04, 0.42, 0.37]);
     d.color(1, 1, 1); d._text(54, 841.89 - 34, agency.name, 16, "F2");
@@ -46,7 +46,7 @@ function letterhead(agency, title, number) {
     void title; void number;
   };
 }
-const idLine = (a) => [a.legal, a.rccm && "RCCM " + a.rccm, a.niu && "NIU " + a.niu].filter(Boolean).join(" — ");
+export const idLine = (a) => [a.legal, a.rccm && "RCCM " + a.rccm, a.niu && "NIU " + a.niu].filter(Boolean).join(" — ");
 
 // ---------- Reçu de paiement ----------
 export function receiptPdf({ agency, p, order, customer }) {

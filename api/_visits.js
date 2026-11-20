@@ -56,6 +56,23 @@ export function slotProblem(date, time, now = localNow(), { lead = true } = {}) 
 const toFront = (v) => ({ id: v.id, property_id: v.property_id, property_title: v.property_title, date: ymd(v.visit_date), time: v.visit_time, status: v.status, note: v.note, admin_note: v.admin_note,
   ...(v.customer_name !== undefined ? { customer_name: v.customer_name, customer_phone: v.customer_phone, customer_email: v.customer_email } : {}) });
 
+ 
+// Rappels : la veille et le jour même, pour les visites confirmées (appelée par la tâche quotidienne)
+export async function runVisitReminders() {
+  if (!(await ensureVisitSchema())) return null;
+  const tz = TZ(), today = localNow().date;
+  const rows = await sql`SELECT id, customer_id, property_title, visit_date, visit_time FROM visits
+    WHERE status = 'confirmed' AND visit_date IN (${today}::date, ${addDays(today, 1)}::date) AND (reminded_on IS NULL OR reminded_on < ${today}::date)`;
+  let n = 0;
+  for (const v of rows) {
+    const when = ymd(v.visit_date) === today ? "aujourd’hui" : "demain";
+    await notifyCustomer(v.customer_id, `Rappel : votre visite de « ${v.property_title} » a lieu ${when} à ${v.visit_time}.`);
+    await sql`UPDATE visits SET reminded_on = ${today}::date WHERE id = ${v.id}`;
+    n++;
+  }
+  return { reminded: n, tz };
+}
+
 // ---------- Gestionnaire (appelé par api/orders.js pour les actions « visit… ») ----------
 export async function visitsHandler(req, res) {
   const a = req.query.a;
@@ -64,18 +81,8 @@ export async function visitsHandler(req, res) {
   if (a === "visit_reminders") {
     const secret = process.env.CRON_SECRET;
     if (!secret || req.headers.authorization !== `Bearer ${secret}`) return send(res, 401, { error: "Refusé" });
-    if (!(await ensureVisitSchema())) return send(res, 503, { error: "Visites indisponibles." });
-    const tz = TZ(), today = localNow().date;
-    const rows = await sql`SELECT id, customer_id, property_title, visit_date, visit_time FROM visits
-      WHERE status = 'confirmed' AND visit_date IN (${today}::date, ${addDays(today, 1)}::date) AND (reminded_on IS NULL OR reminded_on < ${today}::date)`;
-    let n = 0;
-    for (const v of rows) {
-      const when = ymd(v.visit_date) === today ? "aujourd’hui" : "demain";
-      await notifyCustomer(v.customer_id, `Rappel : votre visite de « ${v.property_title} » a lieu ${when} à ${v.visit_time}.`);
-      await sql`UPDATE visits SET reminded_on = ${today}::date WHERE id = ${v.id}`;
-      n++;
-    }
-    return send(res, 200, { ok: true, reminded: n, tz });
+    const r = await runVisitReminders();
+    return r ? send(res, 200, { ok: true, ...r }) : send(res, 503, { error: "Visites indisponibles." });
   }
 
   // ---------- Administration ----------

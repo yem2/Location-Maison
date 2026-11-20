@@ -5,16 +5,17 @@
   const BUILD = "2026-11-17-a";
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const NAV = [
-    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["favoris", "Favoris", "Favoris", "heart"],
+    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["visites", "Visites", "Visites", "calendar"], ["loyers", "Mes loyers", "Loyers", "key"], ["favoris", "Favoris", "Favoris", "heart"],
     ["messages", "Messagerie", "Messages", "chat"], ["notifications", "Notifications", "Alertes", "bell"], ["profil", "Mon profil", "Profil", "user"]
   ];
   const ICON = {
     home: "M3 11l9-8 9 8|M5 10v10h5v-6h4v6h5V10", list: "M8 6h13|M8 12h13|M8 18h13|M3 6h.01|M3 12h.01|M3 18h.01",
+    calendar: "M8 2v4|M16 2v4|M3 10h18|M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z", key: "M21 2l-2 2|M15.5 7.5l3 3L22 7l-3-3|M12.6 11.4a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zM12.6 11.4L15.5 7.5",
     heart: "M12 21s-7-4.5-9-9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c-2 4.5-9 9-9 9z", chat: "M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
     bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9|M13.7 21a2 2 0 0 1-3.4 0", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
   };
 
-  let me = null, view = "apercu", docs = { receipts: [], contracts: [] }, orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
+  let visits = { visits: [], today: "" }, rents = { leases: [], charges: [] }, me = null, view = "apercu", docs = { receipts: [], contracts: [] }, orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
   let unreadNotes = 0, filter = "all", active = null, lastId = 0, pollT = null, countT = null, toastEl = null;
 
   // ---------- Outils ----------
@@ -78,19 +79,24 @@
   const readFavs = () => { try { const a = JSON.parse(localStorage.getItem("maison-favorites") || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
 
   // ---------- Données ----------
+  // Réponses d'API inattendues (ancienne version du serveur, erreur) : on garde des listes vides plutôt que de planter
+  const normVisits = (v) => ({ visits: Array.isArray(v?.visits) ? v.visits : [], today: typeof v?.today === "string" ? v.today : "" });
+  const normRents = (r) => ({ leases: Array.isArray(r?.leases) ? r.leases : [], charges: Array.isArray(r?.charges) ? r.charges : [], today: typeof r?.today === "string" ? r.today : "" });
   async function loadData() {
-    const [o, n, t, c, dc] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config"), api("/api/payments?a=mydocs")]);
+    const [o, n, t, c, dc, vs, rt] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config"), api("/api/payments?a=mydocs"), api("/api/orders?a=visits"), api("/api/orders?a=rent_mine")]);
     if (o.status === "fulfilled") orders = o.value;
     if (n.status === "fulfilled") { notes = n.value; unreadNotes = notes.filter((x) => !x.is_read).length; }
     if (t.status === "fulfilled") threads = t.value;
     if (c.status === "fulfilled") payCfg = c.value;
     if (dc.status === "fulfilled") docs = dc.value;
+    if (vs.status === "fulfilled") visits = normVisits(vs.value);
+    if (rt.status === "fulfilled") rents = normRents(rt.value);
   }
   async function reloadOrders() { try { orders = await api("/api/orders"); } catch (e) { toast(e.message); } }
 
   // ---------- Navigation ----------
   function navBtns(tab) {
-    return NAV.map(([id, label, short, ic]) => {
+    return NAV.filter(([id]) => id !== "loyers" || (rents.leases && rents.leases.length)).map(([id, label, short, ic]) => {
       const n = id === "messages" ? msgUnread() : id === "notifications" ? unreadNotes : 0;
       return h("button", { type: "button", class: id === view ? "on" : "", "aria-current": id === view ? "page" : null, onclick: () => go(id) },
         icon(ic), tab ? short : label, n ? h("span", { class: "badge" }, n > 99 ? "99+" : String(n)) : "");
@@ -408,7 +414,113 @@
       h("div", { class: "card" }, h("h2", {}, "Session"), h("p", { class: "muted" }, "Vous êtes connecté en tant que " + me.email + "."), h("button", { class: "btn danger", type: "button", onclick: logout }, "Se déconnecter")));
   }
 
-  const VIEWS = { apercu: overview, demandes: requests, favoris: favorites, messages: messaging, notifications, profil: profile };
+
+  // ---------- Visites : choisir un bien, une date et un créneau libre ----------
+  const VST = { requested: "Demandée", confirmed: "Confirmée", declined: "Refusée", cancelled: "Annulée", done: "Effectuée" };
+  const fmtDay = (d) => new Date(d + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const addDaysIso = (d, n) => new Date(new Date(d + "T12:00:00Z").getTime() + n * 864e5).toISOString().slice(0, 10);
+  async function reloadVisits() { try { visits = normVisits(await api("/api/orders?a=visits")); } catch (e) { toast(e.message); } }
+
+  function visitsView() {
+    const today = visits.today || new Date().toISOString().slice(0, 10), box = h("div", { style: "display:grid;gap:16px;min-width:0" });
+    const pre = new URLSearchParams(location.search).get("bien");
+    let sel = { propertyId: pre || "", date: "", time: "" };
+    const propSel = h("select", { "aria-label": "Bien à visiter", onchange: (e) => { sel.propertyId = e.target.value; sel.time = ""; loadSlots(); } }, h("option", { value: "" }, "Choisissez un bien…"));
+    const dateIn = h("input", { type: "date", min: today, max: addDaysIso(today, 60), "aria-label": "Date de visite", onchange: (e) => { sel.date = e.target.value; sel.time = ""; loadSlots(); } });
+    const slotsBox = h("div", { class: "slots" }), note = h("textarea", { rows: 2, maxlength: 300, placeholder: "Message pour l’agence (facultatif)" }), err = h("p", { class: "err", role: "alert" });
+    const book = h("button", { class: "btn", type: "button", disabled: true }, "Demander cette visite");
+    function drawSlots(d) {
+      if (!d) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Choisissez un bien et une date pour voir les créneaux libres.")); book.disabled = true; return; }
+      if (!d.dayOk) { slotsBox.replaceChildren(h("small", { class: "muted" }, "Pas de visites ce jour-là : choisissez un autre jour.")); book.disabled = true; return; }
+      slotsBox.replaceChildren(...d.slots.map((s) => h("button", { type: "button", class: "slot" + (sel.time === s.time ? " on" : ""), disabled: !s.free, onclick: () => { sel.time = s.time; drawSlots(d); } }, s.time)));
+      book.disabled = !sel.time;
+    }
+    async function loadSlots() {
+      err.textContent = ""; if (!sel.propertyId || !sel.date) return drawSlots(null);
+      try { drawSlots(await api(`/api/orders?a=visit_slots&propertyId=${encodeURIComponent(sel.propertyId)}&date=${sel.date}`)); } catch (e) { err.textContent = e.message; drawSlots(null); }
+    }
+    book.addEventListener("click", async () => {
+      err.textContent = ""; book.disabled = true;
+      try { await api("/api/orders?a=visit_book", "POST", { propertyId: sel.propertyId, date: sel.date, time: sel.time, note: note.value }); toast("Demande envoyée : l’agence confirme très vite."); note.value = ""; sel.time = ""; await reloadVisits(); render(); }
+      catch (e) { err.textContent = e.message; book.disabled = false; loadSlots(); }
+    });
+    (async () => {
+      if (!props) { try { const r = await api("/api/properties"); props = Array.isArray(r) ? r : []; } catch (e) { props = []; } }
+      propSel.append(...props.map((p) => h("option", { value: p.id, selected: p.id === sel.propertyId }, p.title + (p.location ? " — " + p.location : ""))));
+      if (pre) { history.replaceState(null, "", "/compte#visites"); loadSlots(); }
+    })();
+    drawSlots(null);
+    const upcoming = visits.visits.filter((v) => v.date >= today && ["requested", "confirmed"].includes(v.status)).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+    const past = visits.visits.filter((v) => !upcoming.includes(v));
+    const item = (v, act) => h("div", { class: "card order" }, h("div", { class: "order-head" }, h("div", {}, h("strong", {}, v.property_title), h("br"), h("small", { class: "muted" }, fmtDay(v.date) + " à " + v.time)), h("span", { class: "pill " + (v.status === "confirmed" || v.status === "done" ? "confirmed" : v.status === "requested" ? "pending" : "rejected") }, VST[v.status] || v.status)),
+      v.note ? h("div", { class: "muted" }, "« " + v.note + " »") : "", v.admin_note ? h("div", {}, "💬 " + v.admin_note) : "", act ? h("div", { class: "row", style: "display:flex;gap:8px;flex-wrap:wrap" }, act) : "");
+    box.append(h("div", { class: "card" }, h("h2", {}, "Planifier une visite"), h("div", { class: "form", style: "max-width:520px" },
+      h("label", { class: "field" }, h("span", {}, "Bien"), propSel), h("label", { class: "field" }, h("span", {}, "Date (jusqu’à 60 jours)"), dateIn),
+      h("div", { class: "field" }, h("span", {}, "Créneau"), slotsBox), h("label", { class: "field" }, h("span", {}, "Message"), note), err, book)));
+    box.append(upcoming.length ? h("h2", {}, "Visites à venir") : "", ...upcoming.map((v) => item(v, [
+      v.status === "confirmed" ? h("a", { class: "btn ghost sm", href: "/api/orders?a=visit_ics&id=" + v.id, download: "" }, "📅 Ajouter au calendrier") : "",
+      h("button", { class: "btn ghost sm", type: "button", onclick: async () => { if (!confirm("Annuler cette visite ?")) return; try { await api("/api/orders?a=visit_cancel", "POST", { id: v.id }); await reloadVisits(); render(); } catch (e) { toast(e.message); } } }, "Annuler la visite")])));
+    box.append(past.length ? h("h2", {}, "Historique") : "", ...past.slice(0, 10).map((v) => item(v, null)));
+    if (!visits.visits.length) box.append(h("small", { class: "muted" }, "Vous n’avez pas encore de visite."));
+    return box;
+  }
+
+  // ---------- Loyers : échéances, quittances, déclaration d'un paiement ----------
+  const RST = { due: "À payer", declared: "Paiement en vérification", paid: "Payé ✓" };
+  const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+  const perLabel = (p) => MONTHS[Number(p.slice(5, 7)) - 1] + " " + p.slice(0, 4);
+  async function reloadRents() { try { rents = normRents(await api("/api/orders?a=rent_mine")); } catch (e) { toast(e.message); } }
+
+  async function openRentPay(ch, title) {
+    const overlay = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Payer le loyer" }), sheet = h("div", { class: "sheet" });
+    overlay.append(sheet);
+    const esc = (e) => { if (e.key === "Escape") close(); };
+    function close() { overlay.remove(); document.body.classList.remove("noscroll"); document.removeEventListener("keydown", esc); }
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); }); document.addEventListener("keydown", esc); document.body.append(overlay); document.body.classList.add("noscroll");
+    const head = h("div", { class: "sheet-head" }, h("div", {}, h("h2", {}, "Loyer de " + perLabel(ch.period)), h("strong", { class: "amount" }, money(ch.amount, ch.currency)), h("br"), h("small", { class: "muted" }, title)), h("button", { class: "btn ghost sm", type: "button", "aria-label": "Fermer", onclick: close }, "✕"));
+    sheet.append(head, h("p", { class: "muted" }, "Chargement…"));
+    let d; try { d = await api("/api/orders?a=rent_methods&chargeId=" + ch.id); } catch (x) { sheet.replaceChildren(head, h("p", { class: "err" }, x.message)); return; }
+    if (!d.options.length) { sheet.replaceChildren(head, h("p", { class: "err" }, "Aucun moyen de paiement n’est disponible : contactez l’agence.")); return; }
+    let sel = d.options[0];
+    const list = h("div", { class: "pms", role: "radiogroup" }), detail = h("div", { class: "pm-detail" }), err = h("p", { class: "err", role: "alert" }), submit = h("button", { class: "btn", type: "button" });
+    const phone = h("input", { type: "tel", inputmode: "tel", autocomplete: "tel", maxlength: 25, placeholder: "Ex. +237 6 90 00 00 00" }), txn = h("input", { type: "text", autocapitalize: "characters", autocomplete: "off", maxlength: 40 });
+    const drawList = () => list.replaceChildren(...d.options.map((m) => h("button", { type: "button", role: "radio", "aria-checked": String(m.id === sel.id), class: "pm" + (m.id === sel.id ? " on" : ""), onclick: () => { sel = m; err.textContent = ""; drawList(); drawDetail(); } },
+      h("span", { class: "pm-badge pm-" + m.id }, PMBADGE[m.id]), h("span", { class: "pm-name" }, m.label, h("small", { class: "muted" }, m.kind === "cash" ? "À l’agence" : "Transfert puis vérification")))));
+    function drawDetail() {
+      const amt = money(d.amount, d.currency), kids = [];
+      if (sel.kind === "cash") { kids.push(h("p", {}, "Réglez ", h("strong", {}, amt), " en espèces à l’agence."), sel.address ? h("p", { class: "muted" }, "📍 " + sel.address) : ""); submit.textContent = "J’annonce un paiement en espèces"; }
+      else if (sel.id === "bank_transfer") { kids.push(h("p", {}, "Virement de ", h("strong", {}, amt), " vers :"), copyRow("Banque", sel.bank), copyRow("Titulaire", sel.holder), copyRow("IBAN", sel.iban), copyRow("N° de compte", sel.account), copyRow("BIC", sel.swift), h("label", { class: "field" }, h("span", {}, "Référence du virement"), txn)); submit.textContent = "J’ai payé — envoyer pour vérification"; }
+      else { kids.push(h("p", {}, "1. Envoyez ", h("strong", {}, amt), " via ", sel.label, " au numéro :"), copyRow("Numéro", sel.number), copyRow("Titulaire", sel.holder), h("p", {}, "2. Indiquez l’identifiant de la transaction reçu par SMS :"),
+        h("label", { class: "field" }, h("span", {}, "Numéro avec lequel vous avez payé"), phone), h("label", { class: "field" }, h("span", {}, "Identifiant de la transaction"), txn)); submit.textContent = "J’ai payé — envoyer pour vérification"; }
+      detail.replaceChildren(...kids);
+    }
+    submit.addEventListener("click", async () => {
+      err.textContent = ""; submit.disabled = true;
+      try { await api("/api/orders?a=rent_declare", "POST", { chargeId: ch.id, method: sel.id, payerPhone: phone.value, reference: txn.value }); close(); toast("Paiement envoyé : l’agence le vérifie et vous prévient."); await reloadRents(); render(); }
+      catch (x) { err.textContent = x.message; submit.disabled = false; }
+    });
+    sheet.replaceChildren(head, list, detail, err, submit); drawList(); drawDetail();
+  }
+
+  function rentsView() {
+    const box = h("div", { style: "display:grid;gap:16px;min-width:0" });
+    if (!rents.leases.length) return h("div", { class: "card" }, empty("Vous n’avez pas de bail enregistré."));
+    for (const l of rents.leases) {
+      const rows = rents.charges.filter((c) => c.lease_id === l.id), due = rows.filter((c) => c.status === "due").sort((a, b) => a.due_date.localeCompare(b.due_date)), late = due.filter((c) => c.overdue);
+      box.append(h("div", { class: "card" }, h("div", { class: "order-head" }, h("div", {}, h("h2", {}, l.property_title), h("small", { class: "muted" }, `Loyer ${money(Number(l.rent) + Number(l.charges), l.currency)} par mois · à payer avant le ${l.pay_day}`)),
+        h("span", { class: "pill " + (l.status === "active" ? "confirmed" : "rejected") }, l.status === "active" ? "Bail en cours" : "Terminé")),
+        late.length ? h("div", { class: "paybox" }, h("strong", { style: "color:var(--bad)" }, `⚠ ${late.length} loyer(s) en retard`), h("small", { class: "muted" }, "Merci de régulariser dès que possible.")) : ""));
+      box.append(...rows.map((c) => h("div", { class: "card order" }, h("div", { class: "order-head" }, h("div", {}, h("strong", {}, perLabel(c.period) + " — " + money(c.amount, c.currency)), h("br"), h("small", { class: "muted" }, "Échéance : " + fmtDate(c.due_date))),
+        h("span", { class: "pill " + (c.status === "paid" ? "confirmed" : c.overdue ? "rejected" : "pending") }, c.overdue ? "En retard" : RST[c.status] || c.status)),
+        h("div", { class: "row", style: "display:flex;gap:8px;flex-wrap:wrap" },
+          c.status === "due" ? h("button", { class: "btn sm", type: "button", onclick: () => openRentPay(c, l.property_title) }, "Payer ce loyer") : "",
+          c.status === "paid" ? h("a", { class: "btn ghost sm", href: "/api/orders?a=rent_receipt&id=" + c.id, download: "" }, "📄 Télécharger la quittance (PDF)") : "",
+          c.status === "declared" ? h("small", { class: "muted" }, "L’agence vérifie votre paiement.") : ""))));
+    }
+    return box;
+  }
+
+  const VIEWS = { apercu: overview, demandes: requests, visites: visitsView, loyers: rentsView, favoris: favorites, messages: messaging, notifications, profil: profile };
 
   // ---------- Connexion ----------
   function showLogin(note) {

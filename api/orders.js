@@ -1,6 +1,22 @@
 import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, notifyAdmins, notifyCustomer, str , wrap, archiveSnapshot } from "./_lib.js";
 
+import crypto from "node:crypto";
+import { visitsHandler, runVisitReminders } from "./_visits.js";
+import { rentHandler, rentDaily } from "./_rent.js";
+
+const sameSecret = (got, want) => !!want && typeof got === "string" && got.length === `Bearer ${want}`.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(`Bearer ${want}`));
+
 async function handler(req, res) {
+  // ----- Visites, loyers et tâche quotidienne (une seule fonction Vercel pour tout) -----
+  const act = req.query.a;
+  if (typeof act === "string") {
+    if (act === "daily") {
+      if (!sameSecret(req.headers.authorization, process.env.CRON_SECRET)) return send(res, 401, { error: "Refusé" });
+      return send(res, 200, { ok: true, visits: await runVisitReminders().catch(() => null), rents: await rentDaily().catch(() => null) });
+    }
+    if (act.startsWith("visit")) return visitsHandler(req, res);
+    if (act.startsWith("rent_")) return rentHandler(req, res);
+  }
   // ----- Espace administrateur -----
   if (req.query.admin === "1") {
     const u = await requireUser(req, res);

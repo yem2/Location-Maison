@@ -189,6 +189,7 @@
           </div>
           <button class="search-button dialog-order" type="button" data-order="${esc(property.id)}"${avOf(property) === "available" ? "" : " disabled"}>${avOf(property) === "available" ? "Réserver ce bien" : "Bien indisponible"}</button>
           <button class="search-button dialog-contact" type="button" data-inquire="${esc(property.id)}">Demander des informations <span aria-hidden="true">↗</span></button>
+          <a class="search-button dialog-visit" href="/compte?bien=${esc(property.id)}#visites">Planifier une visite <span aria-hidden="true">📅</span></a>
         </div>
       `;
       propertyDialog.showModal();

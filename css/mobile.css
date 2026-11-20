@@ -99,3 +99,6 @@ button, a, select, label { touch-action: manipulation; -webkit-tap-highlight-col
 
 /* Filet de sécurité : une icône dans un bouton ou un lien ne devient jamais géante */
 button svg, a svg { max-width: 100%; }
+
+/* Bouton « Planifier une visite » (lien) */
+a.search-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
