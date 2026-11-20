@@ -33,3 +33,12 @@ Toutes les routes sont sous `/api/<fichier>?a=<action>`. Les actions modifiantes
 | `rent_admin`, `rent_charges`, `rent_options`, `rent_lease_create`, `rent_lease_end`, `rent_pay`, `rent_reject`, `rent_cancel_charge` | administrateur | Baux, échéancier, encaissement, refus d'un paiement déclaré, fin de bail |
 | `rent_export` | super administrateur | Export CSV des loyers |
 | `daily` | tâche planifiée (CRON_SECRET) | Rappels de visites et de loyers (tous les jours à 06:00 UTC) |
+
+## Gestion : incidents, propriétaires, statistiques (dans `orders`)
+| Actions (`/api/orders?a=`) | Qui | Rôle |
+|---|---|---|
+| `ticket_mine`, `ticket_create` | client | Voir ses incidents ; en signaler un (titre, description, catégorie, urgence, photo) |
+| `ticket_admin`, `ticket_set` | administrateur | Lister les incidents (urgents en premier) ; changer le statut et répondre au locataire |
+| `owner_list`, `owner_statement`, `owner_statement_pdf`, `owner_save`, `owner_delete`, `owner_assign`, `owner_payout` | super administrateur | Propriétaires, commission, affectation des biens, relevé mensuel (aperçu + PDF), marquer « reversé » |
+| `stats_overview` | administrateur | Chiffres clés, séries sur 12 mois, biens les plus demandés |
+| `stats_export` | super administrateur | Export CSV |
