@@ -3,6 +3,7 @@ import { sql, send, throttle, requireUser, requireCustomer, audit, logActivity, 
 import crypto from "node:crypto";
 import { visitsHandler, runVisitReminders } from "./_visits.js";
 import { rentHandler, rentDaily } from "./_rent.js";
+import { manageHandler } from "./_manage.js";
 
 const sameSecret = (got, want) => !!want && typeof got === "string" && got.length === `Bearer ${want}`.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(`Bearer ${want}`));
 
@@ -16,6 +17,7 @@ async function handler(req, res) {
     }
     if (act.startsWith("visit")) return visitsHandler(req, res);
     if (act.startsWith("rent_")) return rentHandler(req, res);
+    if (act.startsWith("ticket_") || act.startsWith("owner_") || act.startsWith("stats_")) return manageHandler(req, res);
   }
   // ----- Espace administrateur -----
   if (req.query.admin === "1") {

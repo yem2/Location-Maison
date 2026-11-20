@@ -624,9 +624,9 @@
   // ----- Navigation regroupée : 8 modules au lieu de 14, sous-onglets à l'intérieur -----
   const BUILD = "2026-11-17-a";
   const GROUPS = [
-    { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: "▦", tabs: [["dashboard", "Tableau de bord"]] },
+    { id: "dashboard", label: "Tableau de bord", short: "Accueil", icon: "▦", tabs: [["dashboard", "Tableau de bord"], ["stats", "Statistiques"]] },
     { id: "annonces", label: "Annonces", icon: "⌂", tabs: [["annonces", "Annonces"]], also: ["form"] },
-    { id: "demandes", label: "Demandes & paiements", short: "Demandes", icon: "☰", tabs: [["orders", "Commandes", "pendingOrders"], ["payments", "Paiements", "paymentsReview"], ["visits", "Visites", "visitsPending"], ["rents", "Loyers", "rentReview"], ["contracts", "Contrats & reçus"], ["paysettings", "Moyens de paiement", null, 1]] },
+    { id: "demandes", label: "Demandes & paiements", short: "Demandes", icon: "☰", tabs: [["orders", "Commandes", "pendingOrders"], ["payments", "Paiements", "paymentsReview"], ["visits", "Visites", "visitsPending"], ["tickets", "Incidents", "ticketsOpen"], ["owners", "Propriétaires", null, 1], ["rents", "Loyers", "rentReview"], ["contracts", "Contrats & reçus"], ["paysettings", "Moyens de paiement", null, 1]] },
     { id: "clients", label: "Clients", icon: "☺", sup: 1, tabs: [["clients", "Clients"], ["activity", "Activité"]] },
     { id: "messagerie", label: "Messagerie", short: "Messages", icon: "✉", tabs: [["chat", "Chat clients", "chat"], ["notifs", "Notifications", "notifications"], ["messages", "Formulaire de contact"], ["suggestions", "Suggestions", "suggestions"], ["whatsapp", "WhatsApp", null, 1]] },
     { id: "supervision", label: "Supervision", icon: "◉", sup: 1, tabs: [["supervision", "Supervision"]] },
@@ -656,7 +656,7 @@
 
     const ctx = { me, api, h, when };
     let body;
-    try { body = tab === "form" ? propForm(window._edit) : tab === "archives" && sup ? window.AdminArch.view(ctx) : tab === "payments" ? window.AdminPay.transactions(ctx) : tab === "visits" ? window.AdminOps.visits(ctx) : tab === "rents" ? window.AdminOps.rents(ctx) : tab === "contracts" ? window.AdminDocs.view(ctx) : tab === "paysettings" && sup ? window.AdminPay.settings(ctx)
+    try { body = tab === "form" ? propForm(window._edit) : tab === "archives" && sup ? window.AdminArch.view(ctx) : tab === "payments" ? window.AdminPay.transactions(ctx) : tab === "tickets" ? window.AdminManage.tickets(ctx) : tab === "owners" && sup ? window.AdminManage.owners(ctx) : tab === "stats" ? window.AdminManage.stats(ctx) : tab === "visits" ? window.AdminOps.visits(ctx) : tab === "rents" ? window.AdminOps.rents(ctx) : tab === "contracts" ? window.AdminDocs.view(ctx) : tab === "paysettings" && sup ? window.AdminPay.settings(ctx)
       : tab === "messages" ? await messagesView() : tab === "admins" && sup ? await adminsView()
       : tab === "orders" ? ordersView() : tab === "notifs" ? notifsView() : tab === "clients" && sup ? customersView() : tab === "activity" && sup ? activityView()
       : tab === "chat" ? chatView() : tab === "whatsapp" && sup ? window.AdminWhatsApp.view(ctx) : tab === "suggestions" ? suggestionsView() : tab === "supervision" && sup ? supervisionView() : tab === "audit" && sup ? auditView() : tab === "profile" ? profileView()

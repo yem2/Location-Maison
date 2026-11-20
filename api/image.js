@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { sql, send, requireUser, audit , wrap } from "./_lib.js";
+import { sql, send, requireUser, audit , wrap, currentUser, currentCustomer, sameOrigin, throttle } from "./_lib.js";
 
 const MAX_BYTES = 1_500_000;
 
@@ -31,8 +31,11 @@ async function handler(req, res) {
     return res.status(200).send(Buffer.from(row.data_b64, "base64"));
   }
   if (req.method !== "POST") return send(res, 405, { error: "Méthode refusée" });
-  const u = await requireUser(req, res);
-  if (!u) return;
+  // Administrateur, ou locataire connecté (photo d'un incident) avec une limite stricte
+  const u = await currentUser(req), c = u ? null : await currentCustomer(req);
+  if (!u && !c) return send(res, 401, { error: "Non connecté" });
+  if (!sameOrigin(req)) return send(res, 403, { error: "Origine refusée" });
+  if (c && !(await throttle(req, res, "imgcust", 10, 3600))) return;
   const raw = typeof req.body?.data === "string" ? req.body.data.replace(/^data:[^,]*,/, "") : "";
   const buf = Buffer.from(raw, "base64");
   if (!buf.length || buf.length > MAX_BYTES) return send(res, 400, { error: "Image vide ou trop lourde (1,5 Mo maximum)." });
@@ -40,7 +43,7 @@ async function handler(req, res) {
   if (!type) return send(res, 400, { error: "Format non pris en charge (JPEG, PNG ou WebP)." });
   const id = crypto.randomBytes(16).toString("hex");
   await sql`INSERT INTO images (id, content_type, data_b64) VALUES (${id}, ${type}, ${buf.toString("base64")})`;
-  await audit(u.id, "image.upload", id);
+  if (u) await audit(u.id, "image.upload", id);
   send(res, 201, { url: `/api/image?id=${id}` });
 }
 

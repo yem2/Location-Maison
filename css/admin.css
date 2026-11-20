@@ -93,3 +93,5 @@ button svg, a svg { width: 1.25em; height: 1.25em; flex: none; max-width: 100%; 
 .bb span:not(.bi):not(.badge) { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bb svg { width: 22px; height: 22px; }
 @media (max-width:860px){ .bb .badge{left:auto;right:6px;top:3px} }
+/* Cartes de chiffres : 2 par ligne sur téléphone (plus compact) */
+@media (max-width:860px){ .kpis{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.kpi{padding:12px}.kpi-v{font-size:1.25rem;overflow-wrap:anywhere}.kpi-l{font-size:.78rem} }

@@ -5,7 +5,7 @@
   const BUILD = "2026-11-17-a";
   const ST = { pending: "En attente", confirmed: "Acceptée", rejected: "Refusée", cancelled: "Annulée" };
   const NAV = [
-    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["visites", "Visites", "Visites", "calendar"], ["loyers", "Mes loyers", "Loyers", "key"], ["favoris", "Favoris", "Favoris", "heart"],
+    ["apercu", "Tableau de bord", "Accueil", "home"], ["demandes", "Mes demandes", "Demandes", "list"], ["visites", "Visites", "Visites", "calendar"], ["loyers", "Mon logement", "Logement", "key"], ["favoris", "Favoris", "Favoris", "heart"],
     ["messages", "Messagerie", "Messages", "chat"], ["notifications", "Notifications", "Alertes", "bell"], ["profil", "Mon profil", "Profil", "user"]
   ];
   const ICON = {
@@ -15,7 +15,7 @@
     bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9|M13.7 21a2 2 0 0 1-3.4 0", user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2|M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"
   };
 
-  let visits = { visits: [], today: "" }, rents = { leases: [], charges: [] }, me = null, view = "apercu", docs = { receipts: [], contracts: [] }, orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
+  let tickets = { tickets: [] }, visits = { visits: [], today: "" }, rents = { leases: [], charges: [] }, me = null, view = "apercu", docs = { receipts: [], contracts: [] }, orders = [], notes = [], threads = [], props = null, payCfg = { online: false };
   let unreadNotes = 0, filter = "all", active = null, lastId = 0, pollT = null, countT = null, toastEl = null;
 
   // ---------- Outils ----------
@@ -83,7 +83,7 @@
   const normVisits = (v) => ({ visits: Array.isArray(v?.visits) ? v.visits : [], today: typeof v?.today === "string" ? v.today : "" });
   const normRents = (r) => ({ leases: Array.isArray(r?.leases) ? r.leases : [], charges: Array.isArray(r?.charges) ? r.charges : [], today: typeof r?.today === "string" ? r.today : "" });
   async function loadData() {
-    const [o, n, t, c, dc, vs, rt] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config"), api("/api/payments?a=mydocs"), api("/api/orders?a=visits"), api("/api/orders?a=rent_mine")]);
+    const [o, n, t, c, dc, vs, rt, tk] = await Promise.allSettled([api("/api/orders"), api("/api/customer?a=notifications"), api("/api/chat?a=threads"), api("/api/pay?a=config"), api("/api/payments?a=mydocs"), api("/api/orders?a=visits"), api("/api/orders?a=rent_mine"), api("/api/orders?a=ticket_mine")]);
     if (o.status === "fulfilled") orders = o.value;
     if (n.status === "fulfilled") { notes = n.value; unreadNotes = notes.filter((x) => !x.is_read).length; }
     if (t.status === "fulfilled") threads = t.value;
@@ -91,6 +91,7 @@
     if (dc.status === "fulfilled") docs = dc.value;
     if (vs.status === "fulfilled") visits = normVisits(vs.value);
     if (rt.status === "fulfilled") rents = normRents(rt.value);
+    if (tk.status === "fulfilled") tickets = normTickets(tk.value);
   }
   async function reloadOrders() { try { orders = await api("/api/orders"); } catch (e) { toast(e.message); } }
 
@@ -465,6 +466,55 @@
     return box;
   }
 
+
+  // ---------- Incidents : signaler un problème dans le logement (photo possible) ----------
+  const TLBL = { open: "Ouvert", in_progress: "En cours", resolved: "Résolu", closed: "Clos" };
+  const CATS = { plomberie: "Plomberie (fuite, WC…)", electricite: "Électricité", serrure: "Serrure / porte", humidite: "Humidité / moisissure", toiture: "Toiture", internet: "Internet", autre: "Autre" };
+  const normTickets = (v) => ({ tickets: Array.isArray(v?.tickets) ? v.tickets : [] });
+  async function reloadTickets() { try { tickets = normTickets(await api("/api/orders?a=ticket_mine")); } catch (e) { toast(e.message); } }
+  async function decodeImage(file) {
+    if (typeof createImageBitmap === "function") { try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch (e) { try { return await createImageBitmap(file); } catch (e2) { /* méthode suivante */ } } }
+    return await new Promise((res, rej) => { const url = URL.createObjectURL(file), img = new Image(); img.onload = () => { URL.revokeObjectURL(url); res(img); }; img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("Photo illisible : utilisez une image JPG, PNG ou WebP.")); }; img.src = url; });
+  }
+  async function shrinkPhoto(file) {
+    if (file.size > 40e6) throw new Error("Photo trop volumineuse.");
+    const bmp = await decodeImage(file), bw = bmp.naturalWidth || bmp.width, bh = bmp.naturalHeight || bmp.height, s = Math.min(1, 1400 / Math.max(bw, bh));
+    const c = document.createElement("canvas"); c.width = Math.round(bw * s); c.height = Math.round(bh * s);
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(bmp, 0, 0, c.width, c.height);
+    for (const q of [0.8, 0.65, 0.5, 0.35]) {
+      const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+      if (blob && blob.size <= 1_100_000) return await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(",")[1]); fr.onerror = () => j(new Error("Lecture de la photo impossible.")); fr.readAsDataURL(blob); });
+    }
+    throw new Error("Photo trop lourde, choisissez-en une plus petite.");
+  }
+  function openTicket() {
+    const overlay = h("div", { class: "modal", role: "dialog", "aria-modal": "true", "aria-label": "Signaler un incident" }), sheet = h("div", { class: "sheet" }); overlay.append(sheet);
+    const esc = (e) => { if (e.key === "Escape") close(); };
+    function close() { overlay.remove(); document.body.classList.remove("noscroll"); document.removeEventListener("keydown", esc); }
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); }); document.addEventListener("keydown", esc); document.body.append(overlay); document.body.classList.add("noscroll");
+    const active = rents.leases.filter((l) => l.status === "active"), lease = h("select", {}, (active.length ? active : rents.leases).map((l) => h("option", { value: l.id }, l.property_title)));
+    const title = h("input", { type: "text", maxlength: 120, placeholder: "Ex. Fuite sous l’évier" }), cat = h("select", {}, Object.entries(CATS).map(([k, v]) => h("option", { value: k }, v))), desc = h("textarea", { rows: 4, maxlength: 1200, placeholder: "Décrivez le problème : où, depuis quand, ce qui se passe…" });
+    const urgent = h("input", { type: "checkbox" }), photo = h("input", { type: "file", accept: "image/*" }), err = h("p", { class: "err", role: "alert" }), send = h("button", { class: "btn", type: "button" }, "Envoyer le signalement");
+    send.addEventListener("click", async () => {
+      err.textContent = ""; send.disabled = true;
+      try {
+        let url = "";
+        if (photo.files[0]) { send.textContent = "Envoi de la photo…"; const r = await api("/api/image", "POST", { data: await shrinkPhoto(photo.files[0]) }); url = r.url; }
+        await api("/api/orders?a=ticket_create", "POST", { leaseId: lease.value, title: title.value, description: desc.value, category: cat.value, priority: urgent.checked ? "urgent" : "normal", photo: url });
+        close(); toast("Signalement envoyé : l’agence vous répond rapidement."); await reloadTickets(); render();
+      } catch (x) { err.textContent = x.message; send.disabled = false; send.textContent = "Envoyer le signalement"; }
+    });
+    sheet.append(h("div", { class: "sheet-head" }, h("h2", {}, "Signaler un incident"), h("button", { class: "btn ghost sm", type: "button", "aria-label": "Fermer", onclick: close }, "✕")),
+      h("div", { class: "form", style: "max-width:none" }, rents.leases.length > 1 ? h("label", { class: "field" }, h("span", {}, "Logement"), lease) : "", h("label", { class: "field" }, h("span", {}, "Titre"), title), h("label", { class: "field" }, h("span", {}, "Catégorie"), cat),
+        h("label", { class: "field" }, h("span", {}, "Description"), desc), h("label", { class: "field" }, h("span", {}, "Photo (facultatif)"), photo),
+        h("label", { style: "display:flex;gap:8px;align-items:center" }, urgent, h("span", {}, "🚨 Urgent (fuite importante, panne totale, sécurité…)")), err, send));
+  }
+  function ticketsCard() {
+    return h("div", { class: "card" }, h("div", { class: "order-head" }, h("div", {}, h("h2", {}, "Un problème dans votre logement ?"), h("small", { class: "muted" }, "Signalez-le avec une photo : l’agence suit la réparation.")), h("button", { class: "btn", type: "button", onclick: openTicket }, "Signaler un incident")),
+      tickets.tickets.length ? h("div", { class: "list" }, tickets.tickets.slice(0, 8).map((t) => h("div", { class: "item" }, h("div", {}, h("strong", {}, (t.priority === "urgent" ? "🚨 " : "") + t.title), h("small", { class: "muted" }, fmtDate(t.created_at)), t.admin_note ? h("small", {}, "💬 " + t.admin_note) : "",
+        t.photo ? h("a", { href: t.photo, target: "_blank", rel: "noopener" }, h("small", {}, "📷 Voir la photo")) : ""), h("span", { class: "pill " + (t.status === "resolved" || t.status === "closed" ? "confirmed" : "pending") }, TLBL[t.status] || t.status)))) : "");
+  }
+
   // ---------- Loyers : échéances, quittances, déclaration d'un paiement ----------
   const RST = { due: "À payer", declared: "Paiement en vérification", paid: "Payé ✓" };
   const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -505,6 +555,7 @@
   function rentsView() {
     const box = h("div", { style: "display:grid;gap:16px;min-width:0" });
     if (!rents.leases.length) return h("div", { class: "card" }, empty("Vous n’avez pas de bail enregistré."));
+    box.append(ticketsCard());
     for (const l of rents.leases) {
       const rows = rents.charges.filter((c) => c.lease_id === l.id), due = rows.filter((c) => c.status === "due").sort((a, b) => a.due_date.localeCompare(b.due_date)), late = due.filter((c) => c.overdue);
       box.append(h("div", { class: "card" }, h("div", { class: "order-head" }, h("div", {}, h("h2", {}, l.property_title), h("small", { class: "muted" }, `Loyer ${money(Number(l.rent) + Number(l.charges), l.currency)} par mois · à payer avant le ${l.pay_day}`)),

@@ -53,16 +53,17 @@ async function handler(req, res) {
 
   if (a === "counts") {
     const safe = (p) => p.then((r) => r[0].n).catch(() => 0);
-    const [notifications, pendingOrders, chat, suggestions, paymentsReview, visitsPending, rentReview] = await Promise.all([
+    const [notifications, pendingOrders, chat, suggestions, paymentsReview, visitsPending, rentReview, ticketsOpen] = await Promise.all([
       safe(sql`SELECT count(*)::int AS n FROM admin_notifications WHERE NOT is_read`),
       safe(sql`SELECT count(*)::int AS n FROM orders WHERE status = 'pending'`),
       safe(sql`SELECT count(DISTINCT m.thread_id)::int AS n FROM chat_messages m JOIN chat_threads t ON t.id = m.thread_id WHERE t.kind = 'support' AND m.sender_type = 'customer' AND m.id > t.admin_read_id`),
       safe(sql`SELECT count(*)::int AS n FROM suggestions WHERE NOT is_read`),
       safe(sql`SELECT count(*)::int AS n FROM payments WHERE status = 'review' OR (status = 'pending' AND method = 'cash')`),
       safe(sql`SELECT count(*)::int AS n FROM visits WHERE status = 'requested'`),
-      safe(sql`SELECT count(*)::int AS n FROM rent_charges WHERE status = 'declared' OR (status = 'due' AND due_date < current_date)`)
+      safe(sql`SELECT count(*)::int AS n FROM rent_charges WHERE status = 'declared' OR (status = 'due' AND due_date < current_date)`),
+      safe(sql`SELECT count(*)::int AS n FROM tickets WHERE status IN ('open', 'in_progress')`)
     ]);
-    return send(res, 200, { notifications, pendingOrders, chat, suggestions, paymentsReview, visitsPending, rentReview });
+    return send(res, 200, { notifications, pendingOrders, chat, suggestions, paymentsReview, visitsPending, rentReview, ticketsOpen });
   }
   if (a === "stats") {
     const [p] = await sql`SELECT count(*)::int AS total, count(*) FILTER (WHERE availability = 'available')::int AS available, count(*) FILTER (WHERE availability = 'reserved')::int AS reserved, count(*) FILTER (WHERE availability = 'unavailable')::int AS unavailable FROM properties`;

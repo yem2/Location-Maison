@@ -91,6 +91,27 @@ export class Pdf {
     }
     return this.gap(4);
   }
+  // Tableau : cols = [{ h: "Titre", w: 0.3 (part de la largeur), align: "right" }], rows = [[...]] ou [{ bold: true, cells: [...] }]
+  table(cols, rows, { size = 9 } = {}) {
+    const total = W - 2 * MX, widths = cols.map((c) => c.w * total), lh = size * 1.35, pad = 4;
+    const cellX = (i, x, ln, bold) => (cols[i].align === "right" ? x + widths[i] - pad - width(ln, size, bold) : x + pad);
+    const head = () => {
+      this.need(lh + 2 * pad + 12);
+      const y = this.y - (lh + 2 * pad); this.rect(MX, y, total, lh + 2 * pad, [0.9, 0.95, 0.93]);
+      let x = MX; cols.forEach((c, i) => { this._text(cellX(i, x, c.h, true), y + pad + size * 0.25, c.h, size, "F2"); x += widths[i]; });
+      this.y = y;
+    };
+    head();
+    for (const r of rows) {
+      const bold = !Array.isArray(r) && r.bold, cells = (Array.isArray(r) ? r : r.cells).map((v, i) => this.wrap(String(v ?? ""), size, bold, widths[i] - 2 * pad));
+      const n = Math.max(1, ...cells.map((c) => c.length)), h = n * lh + 2 * pad;
+      if (this.y - h < BOTTOM) { this.page(); head(); }
+      const top = this.y; let x = MX;
+      cells.forEach((lines, i) => { lines.forEach((ln, k) => this._text(cellX(i, x, ln, bold), top - pad - k * lh - size * 0.95, ln, size, bold ? "F2" : "F1")); x += widths[i]; });
+      this.line(MX, top - h, W - MX, top - h, 0.9, 0.4); this.y = top - h;
+    }
+    return this.gap(8);
+  }
   // Bloc encadré (montant, mention importante…)
   box(lines, { fill = [0.9, 0.96, 0.94], size = 11, bold = true } = {}) {
     const lh = size * 1.5, pad = 10, content = lines.flatMap((l) => this.wrap(l, size, bold, W - 2 * MX - 2 * pad)), h = content.length * lh + 2 * pad;
